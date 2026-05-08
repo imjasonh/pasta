@@ -1,21 +1,24 @@
 # pasta
 
-A polyglot static-analysis framework: tree-sitter for parsing, CUE for rule
-schemas. Inspired by Go's `golang.org/x/tools/go/analysis`.
+`pasta` is a a polyglot static-analysis and structured edit tool.
 
-See [cue.md](./cue.md) for the case for CUE as the rule schema, and
-[future-work.md](./future-work.md) for what's deliberately not yet done.
+Using `pasta`, you can express [AST](https://en.wikipedia.org/wiki/Abstract_syntax_tree) states that you want to flag to users. For example, an empty JS promise (`new Promise(() => {})`). Running `pasta js_empty_promise.cue index.js` would warn when this is found, highlighting this anti-pattern.
+
+Rules can also define an automatix fix, in which case `pasta -fix` will make the edit directly.
+
+`pasta` uses tree-sitter (specifically, [`gotreesitter`](https://github.com/odvcencio/gotreesitter)) for parsing, and [CUE](https://cuelang.org/) for rule schemas. It's heavily inspired by Go's `golang.org/x/tools/go/analysis`.
+
+The intention of `pasta` is to be able to declaratively describe rules for ASTs in any supported language, and quickly and reproducibly flag and fix findings. You can hook this up to your editor and/or CI to automatically flag and potentially fix violations of the rules you've specified.
 
 ## Status
 
-Rules are CUE files loaded at runtime — no Go code per analyzer. The
-framework ships generic predicates (parameterized over grammar specifics)
-so semantic checks like "no later use" and "no named-result clash" are
-expressed in CUE, not Go.
+Rules are defined in CUE files loaded at runtime. The framework ships generic predicates (parameterized over grammar specifics)
+so semantic checks like "no later use" and "no named-result clash" are expressed in CUE.
 
-Shipped analyzers — single-language rules use a `<lang>_` prefix;
-cross-language rules (which match every grammar) have no prefix. ✏️
-marks rules that include an automatic rewrite.
+The repo includes some analyzers as runnable examples. Single-language rules use a `<lang>_` prefix;
+cross-language rules (which match every grammar) have no prefix.
+
+Rules with a ✏️ include an automatic rewrite for `-fix`.
 
 **Cross-language**
 
@@ -129,5 +132,11 @@ for source files in any registered language, runs the rules, and verifies:
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
 
+
+-----
+
 Working in this repo? See [CLAUDE.md](./CLAUDE.md) for layout, how
 to add a new analyzer or language, and conventions worth knowing.
+
+See [cue.md](./cue.md) for the case for CUE as the rule schema, and
+[future-work.md](./future-work.md) for what's deliberately not yet done.

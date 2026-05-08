@@ -1,0 +1,380 @@
+package a
+
+import "fmt"
+
+func foo() error {
+	return nil
+}
+
+func bar() (int, error) {
+	return 0, nil
+}
+
+func baz() (int, string, error) {
+	return 0, "", nil
+}
+
+func bar2(fn func(int) error) error {
+	return fn(0)
+}
+
+type thing struct {
+	val int
+}
+
+// Basic case
+func basic() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Blank + err
+func blankErr() error {
+	// want `can inline assignment into if statement`
+	if _, err := bar(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Multi-line if body
+func multiLineBody() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil {
+		fmt.Println("error:", err)
+		return err
+	}
+	return nil
+}
+
+// Multiple blanks + err
+func multipleBlanks() error {
+	// want `can inline assignment into if statement`
+	if _, _, err := baz(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Non-err variable name
+func namedErr() error {
+	// want `can inline assignment into if statement`
+	if _, ferr := bar(); ferr != nil {
+		return ferr
+	}
+	return nil
+}
+
+// err == nil
+func equalNilPositive() {
+	// want `can inline assignment into if statement`
+	if err := foo(); err == nil {
+		fmt.Println("success")
+	}
+}
+
+// Assignment with = and preceding var declaration
+func assignWithVar() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Comment on assignment line only
+func commentOnAssignLine() error {
+	/* hi */
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Comment on if line only
+func commentOnIfLine() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil { // hi2
+		return err
+	}
+	return nil
+}
+
+// Comments on both assignment and if lines
+func commentOnBothLines() error {
+	/* hi */
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil { // hi2
+		return err
+	}
+	return nil
+}
+
+// Comment between assignment and if
+func commentBetweenStmts() error {
+	// want `can inline assignment into if statement`
+	// this checks for errors
+	if err := foo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Linter directive between assignment and if is preserved
+func commentNolint() error {
+	// want `can inline assignment into if statement`
+	//nolint:errcheck
+	if err := foo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Comment between and comment on if line: only between-comment floats up
+func commentMixed() error {
+	// want `can inline assignment into if statement`
+	// check the error
+	if err := foo(); err != nil { // handle error case
+		return err
+	}
+	return nil
+}
+
+// Comments inside func literal body are preserved
+func commentInFuncLit() {
+	if err := bar2(func(i int) error { // want `can inline assignment into if statement`
+		// skip negative values
+		if i < 0 {
+			return nil
+		}
+		return nil
+	}); err != nil {
+		fmt.Println(err)
+	}
+}
+
+// --- Negative cases below ---
+
+// err used after if block
+func errUsedAfter() error {
+	err := foo()
+	if err != nil {
+		return err
+	}
+	fmt.Println(err)
+	return nil
+}
+
+// If already has an Init
+func alreadyHasInit() error {
+	err := foo()
+	if err2 := foo(); err2 != nil {
+		_ = err
+		return err2
+	}
+	return nil
+}
+
+// err used after if block (== nil variant)
+func equalNilUsedAfter() error {
+	err := foo()
+	if err == nil {
+		return nil
+	}
+	return err
+}
+
+// Condition compares to non-nil value
+func notNilComparison() error {
+	err := foo()
+	other := foo()
+	if err != other {
+		return err
+	}
+	return nil
+}
+
+// Non-consecutive statements
+func nonConsecutive() error {
+	err := foo()
+	fmt.Println("between")
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// result used after the if block
+func resultUsedAfter() (int, error) {
+	result, err := bar()
+	if err != nil {
+		return 0, err
+	}
+	return result, nil
+}
+
+// Selector expression on LHS: := is invalid
+func selectorLHS() error {
+	var t thing
+	var err error
+	t.val, err = bar()
+	if err != nil {
+		return err
+	}
+	_ = t
+	return nil
+}
+
+// Named return parameter: bare return implicitly uses it
+func namedReturn() (err error) {
+	err = foo()
+	if err != nil {
+		fmt.Println(err)
+	}
+	return
+}
+
+// Variable used in outer scope after nested block
+func usedInOuterScope() error {
+	var err error
+	if true {
+		err = foo()
+		if err != nil {
+			return err
+		}
+	}
+	fmt.Println(err)
+	return nil
+}
+
+// Variable used in for loop condition (re-evaluated after body)
+func usedInForCondition() error {
+	data := []int{1, 2, 3}
+	i, err := bar()
+	if err != nil {
+		return err
+	}
+	for i < len(data) {
+		i, err = bar()
+		if err != nil {
+			return err
+		}
+	}
+	_ = data
+	return nil
+}
+
+// Named return in function literal: bare return implicitly uses it
+func funcLitNamedReturn() {
+	f := func() (err error) {
+		err = foo()
+		if err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
+	_ = f
+}
+
+// result used after the if block (with blanks)
+func resultBlanksUsedAfter() (int, error) {
+	result, _, err := baz()
+	if err != nil {
+		return 0, err
+	}
+	return result, nil
+}
+
+// --- Additional positive cases ---
+
+// Multi-return where non-error result is only used inside if body
+func multiReturnUnusedAfter() error {
+	// want `can inline assignment into if statement`
+	if x, err := bar(); err != nil {
+		fmt.Println(x)
+		return err
+	}
+	return nil
+}
+
+// Inside switch/case clause
+func inSwitchCase(x int) error {
+	switch x {
+	case 1:
+		// want `can inline assignment into if statement`
+		if err := foo(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Inside select/comm clause
+func inSelectClause(ch chan int) error {
+	select {
+	case <-ch:
+		// want `can inline assignment into if statement`
+		if err := foo(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// If with else branch, err not used after
+func ifWithElse() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err != nil {
+		return err
+	} else {
+		fmt.Println("ok")
+	}
+	return nil
+}
+
+// Reversed nil comparison: nil != err
+func reversedNil() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); nil != err {
+		return err
+	}
+	return nil
+}
+
+// err == nil with else branch, err used in else (still part of if stmt)
+func equalNilWithElse() error {
+	// want `can inline assignment into if statement`
+	if err := foo(); err == nil {
+		fmt.Println("ok")
+	} else {
+		return err
+	}
+	return nil
+}
+
+// --- Additional negative cases ---
+
+// Compound condition: top-level op is &&, not == or !=
+func compoundCondition() error {
+	err := foo()
+	if err != nil && err.Error() != "" {
+		return err
+	}
+	return nil
+}
+
+// err used after if/else block
+func errUsedAfterIfElse() error {
+	err := foo()
+	if err != nil {
+		fmt.Println("error")
+	} else {
+		fmt.Println("ok")
+	}
+	fmt.Println(err)
+	return nil
+}

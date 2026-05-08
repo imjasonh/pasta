@@ -1,0 +1,16 @@
+package a
+
+func f(x int) bool {
+	if x != 5 { // want `negated equality can be simplified to !=`
+		return false
+	}
+	return true
+}
+
+func g(x int) bool {
+	// Already in canonical form; should not match.
+	if x != 5 {
+		return false
+	}
+	return true
+}

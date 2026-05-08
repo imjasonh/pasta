@@ -1,0 +1,8 @@
+def f(x):
+    if isinstance(x, int):  # want `single-element tuple in isinstance`
+        return True
+    if isinstance(x, int):  # OK
+        return True
+    if isinstance(x, (int, str)):  # OK: multiple types
+        return True
+    return False

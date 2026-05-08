@@ -1,0 +1,7 @@
+enabled: true      # want `non-canonical boolean; use .true.`
+debug: true       # want `non-canonical boolean; use .true.`
+verbose: true       # want `non-canonical boolean; use .true.`
+disabled: false      # want `non-canonical boolean; use .false.`
+deprecated: false   # want `non-canonical boolean; use .false.`
+ok: true
+ok2: false

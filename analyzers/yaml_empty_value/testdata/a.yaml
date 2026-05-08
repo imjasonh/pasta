@@ -1,0 +1,8 @@
+name: foo
+description:                                  # want `YAML key has no value`
+version: 1.0
+author:                                       # want `YAML key has no value`
+empty_string: ""
+explicit_null: null
+nested:
+  key: value

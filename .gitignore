@@ -1,0 +1,10 @@
+# Go build artifacts
+/pasta
+/dist/
+*.test
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

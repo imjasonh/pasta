@@ -1,0 +1,32 @@
+def f(x):
+    if x is None:  # want `comparison to None should use .is None.`
+        return False
+    if x is not None:  # want `comparison to None should use .is not None.`
+        return True
+    return None
+
+
+def g(x):
+    if x is None:  # want `comparison to None should use .is None.`
+        return False
+    if x is not None:  # want `comparison to None should use .is not None.`
+        return True
+    return None
+
+
+def already_correct(x):
+    if x is None:
+        return False
+    if x is not None:
+        return True
+    return None
+
+
+def unrelated(x, y):
+    if x == y:
+        return True
+    if x == 5:
+        return False
+    if x != "":
+        return True
+    return None

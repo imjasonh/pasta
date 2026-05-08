@@ -4,6 +4,7 @@ package apply
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/effect"
@@ -11,8 +12,10 @@ import (
 
 // Apply applies ops to src and returns the new bytes.
 //
-// Ops are sorted by start offset and applied right-to-left so byte
-// offsets remain stable. Overlapping ops are an error.
+// Ops are sorted by start offset, validated for non-overlap, and
+// emitted left-to-right into a builder: the bytes between the previous
+// op's end and the current op's start, then the op's replacement text.
+// Tail bytes after the last op are appended at the end.
 func Apply(src []byte, ops []effect.Op, opts dsl.RewriteOpts) ([]byte, error) {
 	if len(ops) == 0 {
 		return src, nil
@@ -44,12 +47,14 @@ func Apply(src []byte, ops []effect.Op, opts dsl.RewriteOpts) ([]byte, error) {
 		}
 	}
 
-	// Apply right-to-left so earlier offsets stay valid.
-	out := make([]byte, len(src))
-	copy(out, src)
-	for i := len(sorted) - 1; i >= 0; i-- {
-		op := sorted[i]
-		out = append(out[:op.Start], append([]byte(op.Text), out[op.End:]...)...)
+	var b strings.Builder
+	b.Grow(len(src))
+	cursor := uint32(0)
+	for _, op := range sorted {
+		b.Write(src[cursor:op.Start])
+		b.WriteString(op.Text)
+		cursor = op.End
 	}
-	return out, nil
+	b.Write(src[cursor:])
+	return []byte(b.String()), nil
 }

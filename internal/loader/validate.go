@@ -156,13 +156,10 @@ var predicateCaptureArgs = map[string][]int{
 	"has_fact":             {0},
 	"not_has_fact":         {0},
 	"ancestor_is":          {0},
-	"field_absent":         {0},
 	"empty":                {0},
 	"named_child_count":    {0},
 	"prev_sibling_matches": {0},
 	"stmt_index_delta":     {0, 1},
-	"type_is":              {0},
-	"all_match":            {0},
 }
 
 func collectWhereRefs(p *dsl.Pattern, path string, out *[]captureRef) {

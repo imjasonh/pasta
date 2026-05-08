@@ -7,9 +7,9 @@ def f(x):
 
 
 def g(x):
-    if x is None:  # want `comparison to None should use .is None.`
+    if None is x:  # want `comparison to None should use .is None.`
         return False
-    if x is not None:  # want `comparison to None should use .is not None.`
+    if None is not x:  # want `comparison to None should use .is not None.`
         return True
     return None
 
@@ -30,3 +30,12 @@ def unrelated(x, y):
     if x != "":
         return True
     return None
+
+
+# Comments around the operator are preserved by the surgical rewrite.
+def keeps_comments(x, y):
+    return ((  # want:+1 `comparison to None should use .is None.`
+        x  # leading
+        is  # operator note
+        None  # trailing
+    ), x)

@@ -92,17 +92,12 @@ func DefaultRegistry() PredicateRegistry {
 			"last_non_blank":   predLastNonBlank,
 			"same_ident":       predSameIdent,
 			"empty":               predEmptyNamedChildren,
-			"named_child_count":   predNamedChildCount,
+			"named_child_count":    predNamedChildCount,
 			"prev_sibling_matches": predPrevSiblingMatches,
-			"has_fact":         predHasFact,
-			"not_has_fact":     predNotHasFact,
-			"ancestor_is":      predAncestorIs,
-			"field_absent":     predFieldAbsent,
-			"stmt_index_delta": predStmtIndexDelta,
-			// Stubs (not implemented; named in the schema so rules
-			// referencing them parse cleanly). See future-work.md.
-			"type_is":   predStubFalse, // needs language adapter
-			"all_match": predStubFalse, // meta-predicate (sub-predicate over list)
+			"has_fact":             predHasFact,
+			"not_has_fact":         predNotHasFact,
+			"ancestor_is":          predAncestorIs,
+			"stmt_index_delta":     predStmtIndexDelta,
 		},
 		Checks: map[string]CheckFunc{
 			"all_children_type":               checkAllChildrenType,
@@ -292,9 +287,6 @@ func lastNonBlankIdentText(list tsutil.Node) string {
 	return ""
 }
 
-func predStubTrue(args []dsl.Arg, env *Env, caps Captures) bool  { return true }
-func predStubFalse(args []dsl.Arg, env *Env, caps Captures) bool { return false }
-
 // predAncestorIs: [@cap, types]. types is either a list of strings
 // (preferred) or a "|"-separated string (back-compat). Returns true if
 // any ancestor of @cap has a type matching one of the alternatives.
@@ -335,21 +327,6 @@ func splitOrInline(s string) []string {
 	}
 	out = append(out, s[last:])
 	return out
-}
-
-// predFieldAbsent: [@cap, "field_name"] — true if @cap does NOT have a
-// child bound to the given field name. (Same effect as the
-// `absent_fields` pattern field, but usable inside a `where` clause —
-// e.g. for conditional checks based on shape.)
-func predFieldAbsent(args []dsl.Arg, env *Env, caps Captures) bool {
-	if len(args) != 2 {
-		return false
-	}
-	n, ok := resolveCapture(posStr(args, 0), caps)
-	if !ok {
-		return false
-	}
-	return !n.HasFieldName(posStr(args, 1))
 }
 
 // predStmtIndexDelta: [@a, @b, "N"] — true if @a and @b are siblings

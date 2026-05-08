@@ -97,7 +97,6 @@ Loaded once at `initialize` from `initializationOptions`:
 {
   "rules": ["./pasta.cue", "./.pasta/**/*.cue", "./analyzers/**/*.cue"],
   "runOnSave": false,        // if true, only run on didSave
-  "fixOnSave": false,        // emit source.fixAll.pasta on save
   "debounceMs": 200
 }
 ```
@@ -115,8 +114,9 @@ spam errors when the workspace happens to lack a config).
   `pastals` via `vscode-languageclient`. `documentSelector` registers
   every extension declared by loaded `lang/*` packages — query
   `internal/lang.AllExtensions()` and emit it during the extension's
-  build. Settings panel exposes `pasta.rules`, `pasta.runOnSave`,
-  `pasta.fixOnSave`.
+  build. Settings panel exposes `pasta.rules` and `pasta.runOnSave`.
+  On-save fixing is handled editor-side via
+  `editor.codeActionsOnSave` with kind `source.fixAll.pasta`.
 
 - **Neovim**: a `nvim-lspconfig` recipe in `editors/nvim/pasta.lua`.
   Six lines.

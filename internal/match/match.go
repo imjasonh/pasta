@@ -56,9 +56,9 @@ func BuildIndex(root tsutil.Node) *NodeIndex {
 	return idx
 }
 
-// FactStore is the minimal interface the matcher needs from the fact store.
-// Phase 1 doesn't read facts in any iferr rule, so this can be empty in
-// tests; the registry's has_fact predicate uses it.
+// FactStore is the minimal interface the matcher needs from the fact
+// store — only the has_fact / not_has_fact predicates consult it. Tests
+// that don't exercise fact-aware rules can leave Env.FactStore nil.
 type FactStore interface {
 	Has(node tsutil.Node, kind string) bool
 }

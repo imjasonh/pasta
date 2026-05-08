@@ -12,10 +12,13 @@ import (
 
 // Config is parsed from initializationOptions, with defaults supplied
 // for any missing field.
+//
+// On-save fixing is a client concern: editors configure
+// `editor.codeActionsOnSave` with the kind `source.fixAll.pasta`,
+// which the server already advertises. There is no FixOnSave knob.
 type Config struct {
 	Rules      []string `json:"rules"`
 	RunOnSave  bool     `json:"runOnSave"`
-	FixOnSave  bool     `json:"fixOnSave"`
 	DebounceMS int      `json:"debounceMs"`
 }
 
@@ -45,7 +48,6 @@ func parseInitOptions(raw *json.RawMessage) (Config, error) {
 		cfg.Rules = got.Rules
 	}
 	cfg.RunOnSave = got.RunOnSave
-	cfg.FixOnSave = got.FixOnSave
 	if got.DebounceMS != 0 {
 		cfg.DebounceMS = got.DebounceMS
 	}

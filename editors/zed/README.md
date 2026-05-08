@@ -43,8 +43,7 @@ or workspace `.zed/settings.json`):
           "/absolute/path/to/your/rules/**/*.cue"
         ],
         "debounceMs": 200,
-        "runOnSave": false,
-        "fixOnSave": false
+        "runOnSave": false
       }
     }
   }
@@ -57,6 +56,10 @@ or workspace `.zed/settings.json`):
 2. Open a source file that one of your rules targets.
 3. Diagnostics should appear inline. The "code actions" menu should
    offer `pasta: fix <rule>` for any diagnostic with a rewrite.
+
+For fix-on-save, configure Zed's `code_actions_on_format` (or your
+editor's equivalent) to include the `source.fixAll.pasta` kind —
+the server already advertises that action.
 
 If nothing happens, tail Zed's log to see whether `pastals` was
 spawned and what messages it exchanged:

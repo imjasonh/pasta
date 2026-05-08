@@ -33,15 +33,15 @@ package schema
 // ============================================================================
 
 #Predicate: {
+	// Closed set of predicate ops implemented by the runtime. Keep in
+	// sync with internal/match/predicate.go DefaultRegistry().Predicates.
 	op: "eq" | "neq" | "matches" | "not_matches" |
 		"has_fact" | "not_has_fact" |
-		"ancestor_is" | "type_is" |
-		"field_absent" |
+		"ancestor_is" |
 		"last_non_blank" |
 		"nil_comparison" |
 		"same_ident" |
 		"token_eq" |
-		"all_match" |
 		"stmt_index_delta" |
 		"empty" |
 		"named_child_count" |
@@ -92,7 +92,7 @@ package schema
 	} |
 	{within: string, token: string, replace_with: string}
 
-#Rewrite: {template: string} | {edits: [...#Edit]}
+#Rewrite: {edits: [...#Edit]}
 
 #RewriteOpts: {
 	preserve_comments?: bool | *false
@@ -107,7 +107,7 @@ package schema
 	// Closed set of check names registered by pasta's default
 	// PredicateRegistry. Adapters that add language-specific checks
 	// will need to extend this. Keep in sync with
-	// pkg/match/predicate.go DefaultRegistry().Checks.
+	// internal/match/predicate.go DefaultRegistry().Checks.
 	check: "all_children_type" |
 		"siblings_after_no_ident" |
 		"ancestor_field_subtree_no_ident" |

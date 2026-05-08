@@ -117,6 +117,66 @@ func cueErrDetails(err error) string {
 	return errors.Details(cerr, nil)
 }
 
+// LoadLang loads a single embedded lang/<name>/<name>.cue file using
+// the same overlay mechanism as user CUE — synthesizing a cue.mod and
+// vendoring the embedded github.com/imjasonh/pasta module — and
+// returns the decoded Config field as a LanguageDecl.
+//
+// langPath is the path WITHIN the embedded FS, e.g.
+// "cuemod/lang/go/go.cue". The decoded LanguageDecl's Name field is
+// populated from the directory base.
+func LoadLang(langPath string) (dsl.LanguageDecl, error) {
+	src, err := embeddedFS.ReadFile(langPath)
+	if err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("read embedded %s: %w", langPath, err)
+	}
+
+	// Build a virtual workdir whose only on-disk entry is the lang
+	// file. The overlay vendors schema/etc. under cue.mod/pkg.
+	workDir := filepath.Join(string(filepath.Separator), "embedded", filepath.Dir(langPath))
+	filePath := filepath.Join(workDir, filepath.Base(langPath))
+
+	overlay, err := buildOverlay(workDir, filePath)
+	if err != nil {
+		return dsl.LanguageDecl{}, err
+	}
+	overlay[filePath] = load.FromBytes(src)
+
+	cfg := &load.Config{Dir: workDir, Overlay: overlay}
+	insts := load.Instances([]string{filePath}, cfg)
+	if len(insts) == 0 {
+		return dsl.LanguageDecl{}, fmt.Errorf("no instances loaded from %s", langPath)
+	}
+	if err := insts[0].Err; err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("load %s: %s", langPath, cueErrDetails(err))
+	}
+	ctx := cuecontext.New()
+	v := ctx.BuildInstance(insts[0])
+	if err := v.Err(); err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("build %s: %s", langPath, cueErrDetails(err))
+	}
+	if err := v.Validate(cue.Concrete(true)); err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("validate %s: %s", langPath, cueErrDetails(err))
+	}
+
+	cfgVal := v.LookupPath(cue.ParsePath("Config"))
+	if !cfgVal.Exists() {
+		return dsl.LanguageDecl{}, fmt.Errorf("%s: no Config field", langPath)
+	}
+	jb, err := cfgVal.MarshalJSON()
+	if err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("marshal %s: %w", langPath, err)
+	}
+	var ld dsl.LanguageDecl
+	if err := json.Unmarshal(jb, &ld); err != nil {
+		return dsl.LanguageDecl{}, fmt.Errorf("decode %s: %w", langPath, err)
+	}
+	// Name comes from the directory base (e.g. cuemod/lang/go/go.cue
+	// -> "go").
+	ld.Name = filepath.Base(filepath.Dir(langPath))
+	return ld, nil
+}
+
 func loadPath(path string) (LoadResult, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

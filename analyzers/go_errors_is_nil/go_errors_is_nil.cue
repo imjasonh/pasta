@@ -2,6 +2,12 @@
 // `errors.Is` was designed for sentinel comparisons; comparing to nil
 // goes through unnecessary indirection and is slower. The plain
 // equality is more idiomatic and identical in semantics.
+//
+// The transform replaces a call expression with a binary expression,
+// so any comments inside the call's parens (e.g.
+// `errors.Is(/* note */ err, nil)`) are unavoidably lost — there is
+// no natural place for them in the result. Comments INSIDE the `err`
+// expression itself are preserved by the @err interpolation.
 
 package go_errors_is_nil
 

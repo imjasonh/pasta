@@ -269,14 +269,10 @@ type Diagnostic struct {
 	Severity Severity `json:"severity,omitempty"`
 }
 
-// Rewrite is one of:
-//   - a template: a single string with @capture interpolations
-//   - a list of edits
-//
-// We model both as fields and require exactly one to be set.
+// Rewrite is a list of byte-range edits derived from the matched node
+// and its captures. Applied left-to-right by pkg/apply.
 type Rewrite struct {
-	Template string `json:"template,omitempty"`
-	Edits    []Edit `json:"edits,omitempty"`
+	Edits []Edit `json:"edits,omitempty"`
 }
 
 // Edit is the union of:

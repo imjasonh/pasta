@@ -30,3 +30,12 @@ def unrelated(x, y):
     if x != "":
         return True
     return None
+
+
+# Comments around the operator are preserved by the surgical rewrite.
+def keeps_comments(x, y):
+    return ((  # want:+1 `comparison to None should use .is None.`
+        x  # leading
+        ==  # operator note
+        None  # trailing
+    ), x)

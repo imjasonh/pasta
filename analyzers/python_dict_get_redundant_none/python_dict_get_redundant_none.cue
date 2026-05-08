@@ -57,9 +57,15 @@ python_dict_get_redundant_none: schema.#Analyzer & {
 			severity: "hint"
 		}
 
+		// Surgical: delete just the trailing `, None` (from the byte
+		// after `key` to the byte after `default`). Bytes outside
+		// that span — including any comments in `d.get(...)` — are
+		// untouched.
 		rewrite: edits: [{
-			target:      "_root"
-			replacement: "@obj.get(@key)"
+			delete_from:      "key"
+			delete_from_end:  true
+			delete_to:        "default"
+			delete_to_end:    true
 		}]
 	}
 }

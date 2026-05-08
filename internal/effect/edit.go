@@ -45,9 +45,6 @@ func BuildOps(rule string, rw *dsl.Rewrite, ctx BuildContext) ([]Op, error) {
 	if rw == nil {
 		return nil, nil
 	}
-	if rw.Template != "" {
-		return nil, fmt.Errorf("rewrite template form not supported in Phase 1")
-	}
 
 	// Split edits into within-edits (interpolation transforms) and primary
 	// edits (real byte-range mutations).

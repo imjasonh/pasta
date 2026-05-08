@@ -1,0 +1,21 @@
+id = "pastals"
+name = "Pasta"
+description = "Pasta polyglot static-analysis as a language server"
+version = "0.0.1"
+schema_version = 1
+authors = ["Jason Hall <jason@oak.dev>"]
+repository = "https://github.com/imjasonh/pasta"
+
+[language_servers.pastals]
+name = "Pasta"
+# Attach to every language pasta ships with. Add or remove as needed.
+languages = [
+  "Go",
+  "Python",
+  "Rust",
+  "JavaScript",
+  "TypeScript",
+  "YAML",
+  "Shell Script",
+  "JSON",
+]

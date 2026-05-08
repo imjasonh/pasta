@@ -1,0 +1,14 @@
+[package]
+name = "pastals"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Pin to a known-good Zed extension API version. Bump if Zed
+# rejects the build.
+zed_extension_api = "0.2.0"

@@ -1,0 +1,47 @@
+# pasta language server config for Helix.
+#
+# Add to ~/.config/helix/languages.toml. The `language-server` block
+# defines pastals; the `[[language]]` blocks attach it per filetype.
+# Add new language entries as you extend pasta with more grammars.
+
+[language-server.pastals]
+command = "pastals"
+
+[language-server.pastals.config]
+rules = [
+  "./pasta.cue",
+  "./.pasta/**/*.cue",
+  "./analyzers/**/*.cue",
+]
+
+[[language]]
+name = "go"
+language-servers = ["gopls", "pastals"]
+
+[[language]]
+name = "python"
+language-servers = ["pylsp", "pastals"]
+
+[[language]]
+name = "rust"
+language-servers = ["rust-analyzer", "pastals"]
+
+[[language]]
+name = "javascript"
+language-servers = ["typescript-language-server", "pastals"]
+
+[[language]]
+name = "typescript"
+language-servers = ["typescript-language-server", "pastals"]
+
+[[language]]
+name = "yaml"
+language-servers = ["yaml-language-server", "pastals"]
+
+[[language]]
+name = "bash"
+language-servers = ["bash-language-server", "pastals"]
+
+[[language]]
+name = "json"
+language-servers = ["vscode-json-language-server", "pastals"]

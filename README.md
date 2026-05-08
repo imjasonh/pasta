@@ -48,6 +48,7 @@ marks rules that include an automatic rewrite.
 | [python_assert_tuple](./analyzers/python_assert_tuple/python_assert_tuple.cue) ✏️  | `assert (cond, msg)` → `assert cond, msg` (real footgun — tuple is always truthy) |
 | [python_mutable_default](./analyzers/python_mutable_default/python_mutable_default.cue) | Flag mutable default args (`def f(x=[])`) |
 | [python_deprecated_use](./analyzers/python_deprecated_use/python_deprecated_use.cue) | Flag calls to `@deprecated`-decorated functions (fact passing) |
+| [python_taint](./analyzers/python_taint/python_taint.cue)                              | Track taint from `input()` through assignments to `eval`/`exec`/`system` (fact passing + fixpoint propagation) |
 
 **Rust**
 

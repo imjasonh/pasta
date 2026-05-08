@@ -28,9 +28,17 @@ type scheduledRule struct {
 	rule     dsl.Rule
 }
 
+// MaxFixpointIterations bounds the number of times a fixpoint group of
+// rules will be re-run before pasta gives up. Reaching this limit
+// almost always indicates a runaway emission (e.g. a rule emits a fact
+// derived from data that shifts on every iteration). 50 is comfortably
+// larger than the depth of any realistic monotone analysis.
+const MaxFixpointIterations = 50
+
 // Run parses src with l's tree-sitter grammar, runs every applicable
-// rule across the given analyzers in topological order (by
-// requires/provides), and returns aggregated diagnostics and edit ops.
+// rule across the given analyzers in topological order (with fixpoint
+// iteration for cyclic dependencies), and returns aggregated
+// diagnostics and edit ops.
 func Run(
 	ctx context.Context,
 	src []byte,
@@ -50,44 +58,87 @@ func Run(
 		FactStore:  store,
 	}
 
-	scheduled, err := scheduleRules(analyzers, l)
+	groups, err := scheduleGroups(analyzers, l)
 	if err != nil {
 		return Result{}, err
 	}
 
 	var res Result
-	for _, sr := range scheduled {
-		rule := sr.rule
-		matches := match.FindAll(&rule.Match, root, env)
-		for _, m := range matches {
-			if !runPreconditions(&rule, env, m.Captures) {
-				continue
-			}
-			diagAnchor := pickDiagAnchor(&rule, m)
-			if rule.Diagnose != nil {
-				res.Diagnostics = append(res.Diagnostics, effect.BuildDiagnostic(rule.Name, rule.Diagnose, diagAnchor, m.Captures))
-			}
-			if rule.Rewrite != nil {
-				var rwOpts dsl.RewriteOpts
-				if rule.RewriteOpts != nil {
-					rwOpts = *rule.RewriteOpts
+	for _, group := range groups {
+		if !group.fixpoint {
+			for _, sr := range group.rules {
+				if err := runRule(&sr, env, root, store, &res); err != nil {
+					return res, err
 				}
-				adjacentSeq := captureNamesFromAdjacent(rule.Match.Adjacent)
-				ops, err := effect.BuildOps(rule.Name, rule.Rewrite, effect.BuildContext{
-					Captures:    m.Captures,
-					AdjacentSeq: adjacentSeq,
-					RewriteOpts: rwOpts,
-					Root:        root,
-				})
-				if err != nil {
-					return res, fmt.Errorf("build ops for rule %s: %w", rule.Name, err)
-				}
-				res.Ops = append(res.Ops, ops...)
 			}
-			emitFacts(&rule, m, store)
+			continue
+		}
+		// Fixpoint: re-run the group's rules until the fact store
+		// stops growing or we hit the iteration cap. We DON'T
+		// accumulate diagnostics or edit ops within the fixpoint loop
+		// (only on the last iteration), to avoid duplicates: we run
+		// the group once with effect-collection disabled to drive the
+		// fact store to a fixed point, then once more to gather
+		// diagnostics and edits at the converged state.
+		for iter := 0; iter < MaxFixpointIterations; iter++ {
+			before := store.Len()
+			for _, sr := range group.rules {
+				if err := runRule(&sr, env, root, store, nil); err != nil {
+					return res, err
+				}
+			}
+			if store.Len() == before {
+				break
+			}
+		}
+		// Final pass: gather effects with the converged fact store.
+		for _, sr := range group.rules {
+			if err := runRule(&sr, env, root, store, &res); err != nil {
+				return res, err
+			}
 		}
 	}
 	return res, nil
+}
+
+// runRule matches the rule, runs preconditions, and (if collect != nil)
+// appends diagnostics and edit ops to the result. Facts are always
+// emitted into the store, regardless of collect.
+func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factstore.Store, collect *Result) error {
+	rule := sr.rule
+	matches := match.FindAll(&rule.Match, root, env)
+	for _, m := range matches {
+		if !runPreconditions(&rule, env, m.Captures) {
+			continue
+		}
+		emitFacts(&rule, m, store)
+		if collect == nil {
+			continue
+		}
+		diagAnchor := pickDiagAnchor(&rule, m)
+		if rule.Diagnose != nil {
+			collect.Diagnostics = append(collect.Diagnostics,
+				effect.BuildDiagnostic(rule.Name, rule.Diagnose, diagAnchor, m.Captures))
+		}
+		if rule.Rewrite != nil {
+			var rwOpts dsl.RewriteOpts
+			if rule.RewriteOpts != nil {
+				rwOpts = *rule.RewriteOpts
+			}
+			adjacentSeq := captureNamesFromAdjacent(rule.Match.Adjacent)
+			ops, err := effect.BuildOps(rule.Name, rule.Rewrite, effect.BuildContext{
+				Captures:    m.Captures,
+				AdjacentSeq: adjacentSeq,
+				RewriteOpts: rwOpts,
+				Root:        root,
+			})
+			if err != nil {
+				return fmt.Errorf("build ops for rule %s: %w", rule.Name, err)
+			}
+			collect.Ops = append(collect.Ops, ops...)
+		}
+	}
+	return nil
 }
 
 // emitFacts records each fact declared in the rule's `emit` clause,
@@ -126,85 +177,6 @@ func flattenPayload(p any, caps match.Captures) map[string]any {
 // analyzers and orders them topologically by requires/provides. A rule
 // that requires fact F runs after every rule that provides F (within
 // the same Run). Cycles error out — fixpoint groups are future work.
-func scheduleRules(analyzers []*dsl.Analyzer, l lang.Language) ([]scheduledRule, error) {
-	var all []scheduledRule
-	for _, a := range analyzers {
-		for name, rule := range a.Rules {
-			if !ruleAppliesToLanguage(&rule, l) {
-				continue
-			}
-			all = append(all, scheduledRule{analyzer: a, name: name, rule: rule})
-		}
-	}
-
-	// Index rules by what they provide.
-	providers := map[string][]int{}
-	for i, r := range all {
-		for _, f := range r.rule.Provides {
-			providers[f] = append(providers[f], i)
-		}
-	}
-
-	// Build edges: for each rule, depend on every rule providing what
-	// it requires. Self-loops are dropped (a rule that requires its own
-	// provides is permitted; it just runs once with an empty store).
-	indeg := make([]int, len(all))
-	out := make([][]int, len(all))
-	for i, r := range all {
-		for _, req := range r.rule.Requires {
-			for _, j := range providers[req] {
-				if j == i {
-					continue
-				}
-				out[j] = append(out[j], i)
-				indeg[i]++
-			}
-		}
-	}
-
-	// Kahn's algorithm. Within ready set, prefer the rule whose
-	// (analyzer, rule-name) sorts first, for deterministic ordering.
-	var ready []int
-	for i := range all {
-		if indeg[i] == 0 {
-			ready = append(ready, i)
-		}
-	}
-	sortReady(ready, all)
-
-	var ordered []scheduledRule
-	for len(ready) > 0 {
-		i := ready[0]
-		ready = ready[1:]
-		ordered = append(ordered, all[i])
-		for _, j := range out[i] {
-			indeg[j]--
-			if indeg[j] == 0 {
-				ready = append(ready, j)
-			}
-		}
-		sortReady(ready, all)
-	}
-	if len(ordered) != len(all) {
-		return nil, fmt.Errorf("rule dependency cycle: SCC scheduling not yet implemented")
-	}
-	return ordered, nil
-}
-
-func sortReady(ready []int, all []scheduledRule) {
-	for i := 1; i < len(ready); i++ {
-		for j := i; j > 0; j-- {
-			a, b := ready[j-1], ready[j]
-			if all[a].analyzer.Name > all[b].analyzer.Name ||
-				(all[a].analyzer.Name == all[b].analyzer.Name && all[a].name > all[b].name) {
-				ready[j-1], ready[j] = ready[j], ready[j-1]
-				continue
-			}
-			break
-		}
-	}
-}
-
 // ruleAppliesToLanguage returns true if the rule's `languages` list
 // includes the given language by NAME or by GRAMMAR.
 func ruleAppliesToLanguage(rule *dsl.Rule, l lang.Language) bool {

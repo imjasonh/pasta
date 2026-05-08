@@ -1,14 +1,14 @@
-// python_taint is a port of plan.md §4.3 — a three-rule taint
-// tracker for Python. Demonstrates fixpoint scheduling: the
-// `propagate` rule both consumes and produces the `tainted` fact, so
-// the engine groups it into a fixpoint SCC and re-runs it until the
-// fact store stops growing.
+// python_taint is a three-rule taint tracker for Python that
+// demonstrates fixpoint scheduling: the `propagate` rule both
+// consumes and produces the `tainted` fact, so the engine groups it
+// into a fixpoint SCC and re-runs it until the fact store stops
+// growing.
 //
 // Sources, sinks, and propagation are all by IDENTIFIER NAME (the
 // fact store's secondary by-name index). This makes the analysis
 // scope-agnostic — the same name reused in different scopes is treated
-// as a single tainted variable. Real precision needs scope-aware fact
-// keys (plan.md §8 open question).
+// as a single tainted variable. Scope-aware fact keys are tracked in
+// future-work.md.
 //
 // Pass 1 — mark_sources: `x = input()` tags `x` as tainted.
 // Pass 2 — propagate: `y = x` where `x` is tainted, tag `y`. SELF-LOOP.

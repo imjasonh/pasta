@@ -1,6 +1,5 @@
-// go_errcheck is a port of plan.md §4.2 — a two-rule analyzer that
-// uses fact passing to find call sites where an error return is
-// silently discarded.
+// go_errcheck is a two-rule analyzer that uses fact passing to find
+// call sites where an error return is silently discarded.
 //
 // Pass 1: walk function declarations whose result is `error` and emit a
 //         `returns_error` fact attached to the function's name. The
@@ -20,7 +19,7 @@
 // Limitations: name-only fact lookup means a call to any `foo` matches
 // any error-returning `foo`, regardless of scope or package. Real
 // cross-file / cross-package errcheck would need scope-aware fact
-// keys (plan.md §8 open question).
+// keys — see future-work.md.
 
 package go_errcheck
 

@@ -99,9 +99,9 @@ func DefaultRegistry() PredicateRegistry {
 			"ancestor_is":      predAncestorIs,
 			"field_absent":     predFieldAbsent,
 			"stmt_index_delta": predStmtIndexDelta,
-			// Stubs (not implemented; referenced in plan.md so schema
-			// validation succeeds).
-			"type_is":  predStubFalse, // needs language adapter
+			// Stubs (not implemented; named in the schema so rules
+			// referencing them parse cleanly). See future-work.md.
+			"type_is":   predStubFalse, // needs language adapter
 			"all_match": predStubFalse, // meta-predicate (sub-predicate over list)
 		},
 		Checks: map[string]CheckFunc{

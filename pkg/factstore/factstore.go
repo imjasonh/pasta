@@ -6,10 +6,11 @@
 // node, the fact is ALSO indexed by (kind, identifier-text) so that
 // rules can ask "is the function with this name tagged?" at every call
 // site without having to walk back to the declaration. This is the
-// shape needed by the errcheck pattern in plan.md §4.2.
+// shape needed by the errcheck pattern (go_errcheck).
 //
 // Cross-file / cross-package facts are out of scope here; this is a
-// single-source-file store. plan.md §8 sketches the extension.
+// single-source-file store. See future-work.md for the extension
+// sketch.
 package factstore
 
 import (

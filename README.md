@@ -3,8 +3,7 @@
 A polyglot static-analysis framework: tree-sitter for parsing, CUE for rule
 schemas. Inspired by Go's `golang.org/x/tools/go/analysis`.
 
-See [plan.md](./plan.md) for the design rationale and DSL specification,
-[cue.md](./cue.md) for the case for CUE specifically, and
+See [cue.md](./cue.md) for the case for CUE as the rule schema, and
 [future-work.md](./future-work.md) for what's deliberately not yet done.
 
 ## Status

@@ -12,8 +12,10 @@ import (
 	"github.com/imjasonh/pasta/pkg/tsutil"
 )
 
-// TestNilcheckEndToEnd runs the simplify-nil-eq example from plan.md §4.1
-// against a tiny Go file: x == nil --> !x.
+// TestNilcheckEndToEnd exercises a tiny end-to-end rewrite — a rule
+// that replaces an `if x == nil { ... }` condition with `!x`,
+// against a small Go source. Verifies the matcher + effect builder +
+// applicator chain end-to-end.
 func TestNilcheckEndToEnd(t *testing.T) {
 	src := []byte(`package p
 func f(x *int) bool {

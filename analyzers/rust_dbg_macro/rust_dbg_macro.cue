@@ -37,13 +37,16 @@ rust_dbg_macro: schema.#Analyzer & {
 			severity: "error"
 		}
 
-		// Auto-fix not implemented: the obvious `dbg!(EXPR)` → `EXPR`
-		// rewrite requires extracting EXPR from inside the macro's
-		// `(...)`. Pasta's `within` edit replaces the FIRST literal
-		// match, so for `dbg!(foo().bar())` it strips the inner `)`
-		// rather than the outer one. A clean rewrite needs byte-range
-		// arithmetic on the captured token_tree (e.g. `target: tt with
-		// trim_first: 1, trim_last: 1`) — a small framework extension.
-		// TODO(framework): byte-range trim on capture interpolation.
+		// Auto-fix: replace `dbg!(EXPR)` with `EXPR`. The macro
+		// invocation's text is `dbg!(...)`; we replace its byte range
+		// with the same text after trimming the leading `dbg!(` (5
+		// bytes) and the trailing `)` (1 byte). dbg! returns its
+		// argument unchanged, so this is semantically equivalent.
+		rewrite: edits: [{
+			target:      "_root"
+			replacement: "@_root"
+			trim_start:  5
+			trim_end:    1
+		}]
 	}
 }

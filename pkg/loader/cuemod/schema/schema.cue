@@ -75,7 +75,12 @@ package schema
 	severity?: #Severity | *"warning"
 }
 
-#Edit: {target: string, replacement: string} |
+#Edit: {
+		target:       string
+		replacement:  string
+		trim_start?:  int & >=0
+		trim_end?:    int & >=0
+	} |
 	{position: "before" | "after", anchor: string, text: string} |
 	{
 		delete_from:        string

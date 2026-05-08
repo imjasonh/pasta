@@ -66,13 +66,13 @@ func DefaultRegistry() PredicateRegistry {
 			"prev_sibling_matches": predPrevSiblingMatches,
 			"has_fact":         predHasFact,
 			"not_has_fact":     predNotHasFact,
+			"ancestor_is":      predAncestorIs,
+			"field_absent":     predFieldAbsent,
+			"stmt_index_delta": predStmtIndexDelta,
 			// Stubs (not implemented; referenced in plan.md so schema
 			// validation succeeds).
-			"ancestor_is":      predStubFalse,
-			"type_is":          predStubFalse,
-			"field_absent":     predStubFalse,
-			"all_match":        predStubFalse,
-			"stmt_index_delta": predStubFalse,
+			"type_is":  predStubFalse, // needs language adapter
+			"all_match": predStubFalse, // meta-predicate (sub-predicate over list)
 		},
 		Checks: map[string]CheckFunc{
 			"all_children_type":               checkAllChildrenType,
@@ -244,6 +244,117 @@ func lastNonBlankIdentText(list tsutil.Node) string {
 
 func predStubTrue(args []string, env *Env, caps Captures) bool  { return true }
 func predStubFalse(args []string, env *Env, caps Captures) bool { return false }
+
+// predAncestorIs: [@cap, "type1|type2|..."] — true if any ancestor of
+// @cap (walking up via Parent()) has a type in the "|"-separated list.
+// Stops at the root.
+func predAncestorIs(args []string, env *Env, caps Captures) bool {
+	if len(args) != 2 {
+		return false
+	}
+	n, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return false
+	}
+	types := splitOrInline(args[1])
+	for cur := n.Parent(); cur.IsValid(); cur = cur.Parent() {
+		t := cur.Type()
+		for _, want := range types {
+			if t == want {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// splitOrInline splits "a|b|c" into ["a", "b", "c"] without trimming.
+// (predicate.go already has splitOr helper for capture refs but that's
+// in another file scope; re-declare locally.)
+func splitOrInline(s string) []string {
+	out := make([]string, 0, 2)
+	last := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '|' {
+			out = append(out, s[last:i])
+			last = i + 1
+		}
+	}
+	out = append(out, s[last:])
+	return out
+}
+
+// predFieldAbsent: [@cap, "field_name"] — true if @cap does NOT have a
+// child bound to the given field name. (Same effect as the
+// `absent_fields` pattern field, but usable inside a `where` clause —
+// e.g. for conditional checks based on shape.)
+func predFieldAbsent(args []string, env *Env, caps Captures) bool {
+	if len(args) != 2 {
+		return false
+	}
+	n, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return false
+	}
+	return !n.HasFieldName(args[1])
+}
+
+// predStmtIndexDelta: [@a, @b, "N"] — true if @a and @b are siblings
+// in the same parent and exactly N positions apart in the parent's
+// named-children list. Useful for "second/third statement after X"
+// patterns where simple adjacency isn't expressive enough.
+func predStmtIndexDelta(args []string, env *Env, caps Captures) bool {
+	if len(args) != 3 {
+		return false
+	}
+	a, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return false
+	}
+	b, ok := resolveCapture(args[1], caps)
+	if !ok {
+		return false
+	}
+	want := 0
+	sign := 1
+	s := args[2]
+	if len(s) > 0 && s[0] == '-' {
+		sign = -1
+		s = s[1:]
+	} else if len(s) > 0 && s[0] == '+' {
+		s = s[1:]
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+		want = want*10 + int(c-'0')
+	}
+	want *= sign
+
+	parentA := a.Parent()
+	parentB := b.Parent()
+	if !parentA.IsValid() || !parentB.IsValid() {
+		return false
+	}
+	if parentA.StartByte() != parentB.StartByte() || parentA.EndByte() != parentB.EndByte() {
+		return false
+	}
+	siblings := parentA.NamedChildren()
+	idxA, idxB := -1, -1
+	for i, s := range siblings {
+		if s.StartByte() == a.StartByte() && s.EndByte() == a.EndByte() {
+			idxA = i
+		}
+		if s.StartByte() == b.StartByte() && s.EndByte() == b.EndByte() {
+			idxB = i
+		}
+	}
+	if idxA < 0 || idxB < 0 {
+		return false
+	}
+	return idxB-idxA == want
+}
 
 // predHasFact: [@cap, "kind"] — true if the captured node has a fact
 // of the given kind in the env's FactStore.

@@ -242,9 +242,16 @@ type Rewrite struct {
 // capture's END rather than its START. Useful for removing trailing
 // constructs like an empty else block: delete from consequence's End
 // to alternative's End.
+//
+// `trim_start` and `trim_end` apply only on the replace form, AFTER
+// `replacement` is interpolated. They drop N bytes from the start/end
+// of the resulting text. Useful for "replace dbg!(EXPR) with EXPR" —
+// interpolate @_root then trim the wrapping `dbg!(` and `)`.
 type Edit struct {
 	Target        string `json:"target,omitempty"`
 	Replacement   string `json:"replacement,omitempty"`
+	TrimStart     int    `json:"trim_start,omitempty"`
+	TrimEnd       int    `json:"trim_end,omitempty"`
 	Position      string `json:"position,omitempty"`
 	Anchor        string `json:"anchor,omitempty"`
 	Text          string `json:"text,omitempty"`

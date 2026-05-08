@@ -138,6 +138,21 @@ func collectAtRefs(s string) []string {
 	return out
 }
 
+// applyTrim drops `start` bytes from the front of s and `end` bytes
+// from the back. If the trim exceeds s's length, the result is empty.
+func applyTrim(s string, start, end int) string {
+	if start < 0 {
+		start = 0
+	}
+	if end < 0 {
+		end = 0
+	}
+	if start+end >= len(s) {
+		return ""
+	}
+	return s[start : len(s)-end]
+}
+
 func applyWithin(src string, edits []dsl.Edit) string {
 	cur := src
 	for _, e := range edits {
@@ -157,10 +172,14 @@ func buildPrimaryOp(rule string, e dsl.Edit, ctx BuildContext, captureText map[s
 		if !ok {
 			return Op{}, fmt.Errorf("edit.target %q: capture missing", e.Target)
 		}
+		text := interpolateWithCaptures(e.Replacement, ctx.Captures, captureText)
+		if e.TrimStart > 0 || e.TrimEnd > 0 {
+			text = applyTrim(text, e.TrimStart, e.TrimEnd)
+		}
 		return Op{
 			Start: n.StartByte(),
 			End:   n.EndByte(),
-			Text:  interpolateWithCaptures(e.Replacement, ctx.Captures, captureText),
+			Text:  text,
 			Rule:  rule,
 			Edit:  e,
 		}, nil

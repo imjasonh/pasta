@@ -67,9 +67,15 @@ go_api_migration: schema.#Analyzer & {
 				severity: "warning"
 			}
 
+			// Insert `, nil` immediately after the existing arg
+			// rather than rewriting the full call expression. This
+			// preserves anything else inside the parens — most
+			// importantly inline comments like `f(/* doc */ x)`,
+			// which a `target: "_root"` replacement would clobber.
 			rewrite: edits: [{
-				target:      "_root"
-				replacement: "widget.Render(@arg, nil)"
+				position: "after"
+				anchor:   "arg"
+				text:     ", nil"
 			}]
 		}
 

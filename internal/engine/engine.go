@@ -52,11 +52,16 @@ func Run(
 	defer tree.Release()
 
 	store := factstore.New()
+	commentTypes := make(map[string]bool, len(l.CommentTypes))
+	for _, t := range l.CommentTypes {
+		commentTypes[t] = true
+	}
 	env := &match.Env{
-		StmtList:   l.StmtList,
-		Predicates: match.DefaultRegistry(),
-		FactStore:  store,
-		Index: match.BuildIndex(root),
+		StmtList:     l.StmtList,
+		Predicates:   match.DefaultRegistry(),
+		FactStore:    store,
+		CommentTypes: commentTypes,
+		Index:        match.BuildIndex(root),
 	}
 
 	groups, err := scheduleGroups(analyzers, l)

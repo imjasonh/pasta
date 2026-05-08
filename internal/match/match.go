@@ -26,6 +26,12 @@ type Env struct {
 	FactStore   FactStore
 	CurrentRule string
 
+	// CommentTypes is the set of tree-sitter node types treated as
+	// comments for the current language. Predicates that count or
+	// list named children skip these so e.g.
+	// `named_child_count: ["@args", "1"]` matches `f(/* note */ x)`.
+	CommentTypes map[string]bool
+
 	// Index maps tree-sitter node type to all named nodes of that type
 	// in the current parse tree. Built once per parse, consulted by
 	// FindAll to skip the per-rule full-tree walk. Optional: when nil,
@@ -134,8 +140,11 @@ func matchPattern(p *dsl.Pattern, n tsutil.Node, env *Env, caps Captures) bool {
 	}
 
 	if len(p.Children) > 0 {
-		named := n.NamedChildren()
-		// Positional match: each Children[i] against named[i].
+		// Positional match against named children, skipping comments.
+		// Comments-as-children are tree-sitter's representation of
+		// `f(/* note */ x)` and similar — they should not throw off
+		// positional matching of semantic children.
+		named := nonCommentNamedChildren(n, env)
 		if len(p.Children) > len(named) {
 			return false
 		}

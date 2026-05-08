@@ -13,6 +13,10 @@ func use(name string) {
 	// Already migrated — two args present, leave alone.
 	_ = widget.Render(name, nil)
 
+	// Inline comment in the arg list: count predicate must skip
+	// comments, and the rewrite must not clobber the comment.
+	_ = widget.Render(/* note */ name) // want `widget\.Render gained an opts \*Options arg in v1\.2\.3`
+
 	// Different method on the same package — out of scope.
 	_ = widget.Update(name)
 

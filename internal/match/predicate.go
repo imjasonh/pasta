@@ -113,6 +113,26 @@ func DefaultRegistry() PredicateRegistry {
 	}
 }
 
+// nonCommentNamedChildren returns n's named children with the language's
+// comment node types skipped. Used by predicates whose semantics treat
+// comments as inert (counts, indices, "previous sibling", etc.). When
+// env has no CommentTypes set (e.g. unit tests) it falls through to
+// raw NamedChildren.
+func nonCommentNamedChildren(n tsutil.Node, env *Env) []tsutil.Node {
+	all := n.NamedChildren()
+	if env == nil || env.CommentTypes == nil {
+		return all
+	}
+	out := make([]tsutil.Node, 0, len(all))
+	for _, c := range all {
+		if env.CommentTypes[c.Type()] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 // resolveCapture extracts a node by reference. ref may be "@name" (lookup
 // in caps), or a "|"-separated list of "@name" alternatives — the first
 // bound one wins. Non-@ values fail.
@@ -372,7 +392,7 @@ func predStmtIndexDelta(args []dsl.Arg, env *Env, caps Captures) bool {
 	if parentA.StartByte() != parentB.StartByte() || parentA.EndByte() != parentB.EndByte() {
 		return false
 	}
-	siblings := parentA.NamedChildren()
+	siblings := nonCommentNamedChildren(parentA, env)
 	idxA, idxB := -1, -1
 	for i, s := range siblings {
 		if s.StartByte() == a.StartByte() && s.EndByte() == a.EndByte() {
@@ -428,7 +448,7 @@ func predEmptyNamedChildren(args []dsl.Arg, env *Env, caps Captures) bool {
 	if !ok {
 		return false
 	}
-	return len(n.NamedChildren()) == 0
+	return len(nonCommentNamedChildren(n, env)) == 0
 }
 
 // predPrevSiblingMatches: [@cap, "regex"] — true if the named child of
@@ -446,6 +466,9 @@ func predPrevSiblingMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if !parent.IsValid() {
 		return false
 	}
+	// Note: this predicate intentionally does NOT skip comments. Its
+	// primary use is finding doc comments preceding a declaration
+	// (see analyzers/go_deprecated_use), so comments ARE the target.
 	siblings := parent.NamedChildren()
 	prev := tsutil.Node{}
 	for _, s := range siblings {
@@ -465,7 +488,9 @@ func predPrevSiblingMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 }
 
 // predNamedChildCount: [@cap, "N"] — true if @cap has exactly N named
-// children.
+// children, ignoring comment-typed children. The comment skip lets
+// rules count semantic args/elements without being thrown off by
+// inline comments (e.g. `f(/* note */ x)` still has count 1).
 func predNamedChildCount(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
@@ -481,7 +506,7 @@ func predNamedChildCount(args []dsl.Arg, env *Env, caps Captures) bool {
 		}
 		want = want*10 + int(c-'0')
 	}
-	return len(n.NamedChildren()) == want
+	return len(nonCommentNamedChildren(n, env)) == want
 }
 
 // ============================================================================
@@ -506,7 +531,7 @@ func checkAllChildrenType(args map[string]dsl.Arg, env *Env, caps Captures) bool
 	if want == "" {
 		return false
 	}
-	for _, c := range cap0.NamedChildren() {
+	for _, c := range nonCommentNamedChildren(cap0, env) {
 		if c.Type() != want {
 			return false
 		}

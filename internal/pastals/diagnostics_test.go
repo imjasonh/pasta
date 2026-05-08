@@ -18,8 +18,8 @@ func TestSeverityFromPasta(t *testing.T) {
 		{dsl.SeverityWarning, protocol.SeverityWarning},
 		{dsl.SeverityInfo, protocol.SeverityInformation},
 		{dsl.SeverityHint, protocol.SeverityHint},
-		{"", protocol.SeverityWarning},          // empty defaults to warning
-		{"unknown", protocol.SeverityWarning},   // unknown defaults to warning
+		{"", protocol.SeverityWarning},        // empty defaults to warning
+		{"unknown", protocol.SeverityWarning}, // unknown defaults to warning
 	}
 	for _, tc := range cases {
 		if got := severityFromPasta(tc.in); got != tc.want {
@@ -85,7 +85,7 @@ func TestBuildLSPDiagnostics_PairsByRuleNotRange(t *testing.T) {
 	}}
 	ops := []effect.Op{{
 		Rule:  "iferr",
-		Start: 0,        // way before the anchor
+		Start: 0, // way before the anchor
 		End:   uint32(len(src)),
 		Text:  "rewrite-of-everything",
 	}}

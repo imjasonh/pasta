@@ -15,7 +15,7 @@ func use(name string) {
 
 	// Inline comment in the arg list: count predicate must skip
 	// comments, and the rewrite must not clobber the comment.
-	_ = widget.Render(/* note */ name, nil) // want `widget\.Render gained an opts \*Options arg in v1\.2\.3`
+	_ = widget.Render( /* note */ name, nil) // want `widget\.Render gained an opts \*Options arg in v1\.2\.3`
 
 	// Different method on the same package — out of scope.
 	_ = widget.Update(name)

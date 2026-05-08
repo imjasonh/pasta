@@ -90,9 +90,9 @@ func TestUriToPath_NonFileScheme(t *testing.T) {
 func TestPathURIRoundTrip(t *testing.T) {
 	// On Unix, /a/b/c -> file:///a/b/c -> /a/b/c.
 	cases := map[string]string{
-		"file:///a/b/c.go":              "/a/b/c.go",
-		"file:///tmp/x.cue":             "/tmp/x.cue",
-		"file:///some%20path/file.go":   "/some path/file.go",
+		"file:///a/b/c.go":            "/a/b/c.go",
+		"file:///tmp/x.cue":           "/tmp/x.cue",
+		"file:///some%20path/file.go": "/some path/file.go",
 	}
 	for uri, p := range cases {
 		got, err := uriToPath(uri)

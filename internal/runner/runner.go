@@ -85,9 +85,9 @@ func RunFile(ctx context.Context, path string, src []byte, analyzers []*dsl.Anal
 
 // TestReport is the outcome of running tests in a rule directory.
 type TestReport struct {
-	Dir       string
-	NumFiles  int
-	Failures  []string // human-readable failure messages
+	Dir      string
+	NumFiles int
+	Failures []string // human-readable failure messages
 }
 
 // Failed reports whether any failure was recorded.

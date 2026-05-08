@@ -41,6 +41,7 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [go_errcheck](./analyzers/go_errcheck/go_errcheck.cue) ✏️                     | Flag and rewrite `foo()` to `_ = foo()` when foo returns error (fact passing) |
 | [go_deprecated_use](./analyzers/go_deprecated_use/go_deprecated_use.cue)      | Flag calls to functions whose doc comment contains `Deprecated:` (fact passing) |
 | [go_taint](./analyzers/go_taint/go_taint.cue)                                  | Track taint from `os.Getenv` through assignments to `exec.Command` (fact passing + fixpoint) |
+| [go_api_migration](./analyzers/go_api_migration/go_api_migration.cue) ✏️       | Worked example: ship a `.cue` adapter for breaking API changes — added trailing arg (`widget.Render(x)` → `widget.Render(x, nil)`) and rename (`widget.OldName` → `widget.NewName`) |
 
 **Python**
 
@@ -131,6 +132,47 @@ for source files in any registered language, runs the rules, and verifies:
    marker line).
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
+
+## Use case: shipping breaking-change adapters
+
+Library authors can use `pasta` rules as **codemods that travel with a
+release**. When a breaking API change lands, ship a `.cue` file
+alongside the version bump and downstream consumers can run
+`pasta -fix` to migrate their call sites mechanically.
+
+The `.cue` file expresses the rewrite once, in a tree-aware way, and
+runs against any caller's source — no separate per-codebase script,
+and no need for the library author to publish (or each consumer to
+write) a one-off migrator.
+
+[`analyzers/go_api_migration`](./analyzers/go_api_migration/go_api_migration.cue)
+is a worked example covering two of the most common shapes:
+
+- **Added trailing argument.** v1.2.3 of a fictional `widget` library
+  added a trailing `opts *Options` parameter to `widget.Render`. The
+  rule matches *only* the pre-migration single-arg call shape (using
+  `named_child_count`), rewrites `widget.Render(x)` to
+  `widget.Render(x, nil)`, and is a no-op once a codebase has been
+  migrated, so re-running it is safe.
+
+- **Rename.** v1.3.0 renamed `widget.OldName` to `widget.NewName`.
+  The rule matches the selector expression itself (not the call), so
+  it rewrites both `widget.OldName` value references and
+  `widget.OldName(...)` calls in one pass.
+
+Each rule emits a diagnostic *and* a rewrite. Without `-fix`, `pasta`
+behaves as a CI lint pointing at unmigrated call sites; with `-fix` it
+edits them in place. The same pattern extends naturally to:
+
+- Removed arguments (`delete_from`/`delete_to` between captures).
+- Argument reorder (capture each arg, reassemble in the new order).
+- Removed APIs that need a hand-written replacement (emit a
+  diagnostic only — leave the rewrite off so a human handles it).
+
+The full test, with positive and negative cases (different package,
+different method, already-migrated arity), lives in
+[`analyzers/go_api_migration/testdata/a.go`](./analyzers/go_api_migration/testdata/a.go)
+and its `.golden` counterpart.
 
 ## LSP
 

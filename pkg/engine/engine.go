@@ -56,6 +56,7 @@ func Run(
 		StmtList:   l.StmtList,
 		Predicates: match.DefaultRegistry(),
 		FactStore:  store,
+		Index: match.BuildIndex(root),
 	}
 
 	groups, err := scheduleGroups(analyzers, l)

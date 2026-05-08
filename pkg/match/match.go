@@ -21,10 +21,33 @@ func (c Captures) Clone() Captures {
 
 // Env carries language- and rule-set-specific state needed for matching.
 type Env struct {
-	StmtList     tsutil.StmtListProvider
-	Predicates   PredicateRegistry
-	FactStore    FactStore
-	CurrentRule  string
+	StmtList    tsutil.StmtListProvider
+	Predicates  PredicateRegistry
+	FactStore   FactStore
+	CurrentRule string
+
+	// Index maps tree-sitter node type to all named nodes of that type
+	// in the current parse tree. Built once per parse, consulted by
+	// FindAll to skip the per-rule full-tree walk. Optional: when nil,
+	// FindAll falls back to tsutil.Walk.
+	Index *NodeIndex
+}
+
+// NodeIndex is a per-parse-tree map from node type to every named node
+// of that type. Built in O(N) at parse time; turns FindAll's per-rule
+// cost from O(tree) to O(target-type-count).
+type NodeIndex struct {
+	ByType map[string][]tsutil.Node
+}
+
+// BuildIndex walks root once and indexes every named node by type.
+func BuildIndex(root tsutil.Node) *NodeIndex {
+	idx := &NodeIndex{ByType: map[string][]tsutil.Node{}}
+	tsutil.Walk(root, func(n tsutil.Node) bool {
+		idx.ByType[n.Type()] = append(idx.ByType[n.Type()], n)
+		return true
+	})
+	return idx
 }
 
 // FactStore is the minimal interface the matcher needs from the fact store.
@@ -42,11 +65,34 @@ type Match struct {
 	Captures Captures
 }
 
-// FindAll walks the tree and returns every match of pattern p anchored at
-// any node whose type is in p.Node. Each match's captures include the
-// anchor node bound to "_root".
+// FindAll returns every match of pattern p anchored at any node whose
+// type is in p.Node. Each match's captures include the anchor node
+// bound to "_root".
+//
+// When env.Index is set and p.Node is non-empty, candidates are
+// retrieved from the index in O(target-type-count). When the index is
+// nil OR p.Node is empty (match-any-type), falls back to a tree walk.
 func FindAll(p *dsl.Pattern, root tsutil.Node, env *Env) []Match {
 	var matches []Match
+
+	if env.Index != nil && len(p.Node) > 0 {
+		seen := map[[2]uint32]bool{}
+		for _, t := range p.Node {
+			for _, n := range env.Index.ByType[t] {
+				key := [2]uint32{n.StartByte(), n.EndByte()}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				caps := Captures{"_root": n}
+				if matchPattern(p, n, env, caps) {
+					matches = append(matches, Match{Anchor: n, Captures: caps})
+				}
+			}
+		}
+		return matches
+	}
+
 	tsutil.Walk(root, func(n tsutil.Node) bool {
 		if !typeMatches(p.Node, n.Type()) {
 			return true

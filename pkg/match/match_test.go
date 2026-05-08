@@ -294,6 +294,41 @@ func foo() error { return nil }
 	}
 }
 
+// TestIndexedFindMatchesWalkResults verifies that FindAll returns the
+// same set of matches whether or not env.Index is set — the index is
+// strictly an optimization.
+func TestIndexedFindMatchesWalkResults(t *testing.T) {
+	root := parseGo(t, `package p
+func a() {}
+func b() {}
+func c() {}
+type T struct {
+	x int
+}
+`)
+	pat := &dsl.Pattern{Node: []string{"function_declaration"}}
+
+	envWithIndex := &Env{
+		StmtList:   lang.All["go"].StmtList,
+		Predicates: DefaultRegistry(),
+		Index:      BuildIndex(root),
+	}
+	withIdx := FindAll(pat, root, envWithIndex)
+
+	envNoIndex := &Env{
+		StmtList:   lang.All["go"].StmtList,
+		Predicates: DefaultRegistry(),
+	}
+	withoutIdx := FindAll(pat, root, envNoIndex)
+
+	if len(withIdx) != len(withoutIdx) {
+		t.Fatalf("indexed count = %d, walk count = %d (must match)", len(withIdx), len(withoutIdx))
+	}
+	if len(withIdx) != 3 {
+		t.Errorf("expected 3 function_declarations, got %d", len(withIdx))
+	}
+}
+
 func TestNonConsecutive(t *testing.T) {
 	root := parseGo(t, `package p
 import "fmt"

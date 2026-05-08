@@ -41,7 +41,7 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [go_errcheck](./analyzers/go_errcheck/go_errcheck.cue) ✏️                     | Flag and rewrite `foo()` to `_ = foo()` when foo returns error (fact passing) |
 | [go_deprecated_use](./analyzers/go_deprecated_use/go_deprecated_use.cue)      | Flag calls to functions whose doc comment contains `Deprecated:` (fact passing) |
 | [go_taint](./analyzers/go_taint/go_taint.cue)                                  | Track taint from `os.Getenv` through assignments to `exec.Command` (fact passing + fixpoint) |
-| [go_api_migration](./analyzers/go_api_migration/go_api_migration.cue) ✏️       | Worked example: ship a `.cue` adapter for breaking API changes — added trailing arg (`widget.Render(x)` → `widget.Render(x, nil)`) and rename (`widget.OldName` → `widget.NewName`) |
+| [go_api_migration](./analyzers/go_api_migration/go_api_migration.cue) ✏️       | Worked example: ship a `.cue` adapter for breaking API changes -- added trailing arg (`widget.Render(x)` → `widget.Render(x, nil)`) and rename (`widget.OldName` → `widget.NewName`) |
 
 **Python**
 
@@ -51,7 +51,7 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [python_bare_except](./analyzers/python_bare_except/python_bare_except.cue) ✏️     | `except:` → `except Exception:` |
 | [python_isinstance_singleton](./analyzers/python_isinstance_singleton/python_isinstance_singleton.cue) ✏️ | `isinstance(x, (T,))` → `isinstance(x, T)` |
 | [python_dict_get_redundant_none](./analyzers/python_dict_get_redundant_none/python_dict_get_redundant_none.cue) ✏️ | `d.get(k, None)` → `d.get(k)` |
-| [python_assert_tuple](./analyzers/python_assert_tuple/python_assert_tuple.cue) ✏️  | `assert (cond, msg)` → `assert cond, msg` (real footgun — tuple is always truthy) |
+| [python_assert_tuple](./analyzers/python_assert_tuple/python_assert_tuple.cue) ✏️  | `assert (cond, msg)` → `assert cond, msg` (real footgun -- tuple is always truthy) |
 | [python_mutable_default](./analyzers/python_mutable_default/python_mutable_default.cue) | Flag mutable default args (`def f(x=[])`) |
 | [python_deprecated_use](./analyzers/python_deprecated_use/python_deprecated_use.cue) | Flag calls to `@deprecated`-decorated functions (fact passing) |
 | [python_taint](./analyzers/python_taint/python_taint.cue)                              | Track taint from `input()` through assignments to `eval`/`exec`/`system` (fact passing + fixpoint propagation) |
@@ -133,20 +133,20 @@ for source files in any registered language, runs the rules, and verifies:
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
 
-## Use case: shipping breaking-change adapters
+## Use case: shipping adapters for breaking changes
 
 Library authors can use `pasta` rules as **codemods that travel with a
 release**. When a breaking API change lands, ship a `.cue` file
 alongside the version bump and downstream consumers can run
-`pasta -fix` to migrate their call sites mechanically.
+`pasta -fix upgrade_v1.2.3.cue ./...` to migrate their call sites mechanically.
 
 The `.cue` file expresses the rewrite once, in a tree-aware way, and
-runs against any caller's source — no separate per-codebase script,
+runs against any caller's source -- no separate per-codebase script,
 and no need for the library author to publish (or each consumer to
 write) a one-off migrator.
 
 [`analyzers/go_api_migration`](./analyzers/go_api_migration/go_api_migration.cue)
-is a worked example covering two of the most common shapes:
+is a working example covering two of the most common shapes:
 
 - **Added trailing argument.** v1.2.3 of a fictional `widget` library
   added a trailing `opts *Options` parameter to `widget.Render`. The
@@ -161,13 +161,13 @@ is a worked example covering two of the most common shapes:
   `widget.OldName(...)` calls in one pass.
 
 Each rule emits a diagnostic *and* a rewrite. Without `-fix`, `pasta`
-behaves as a CI lint pointing at unmigrated call sites; with `-fix` it
+behaves as a CI lint pointing at unmigrated call sites (`go build` is also a hint); with `-fix` it
 edits them in place. The same pattern extends naturally to:
 
 - Removed arguments (`delete_from`/`delete_to` between captures).
 - Argument reorder (capture each arg, reassemble in the new order).
 - Removed APIs that need a hand-written replacement (emit a
-  diagnostic only — leave the rewrite off so a human handles it).
+  diagnostic only -- leave the rewrite off so a human handles it).
 
 The full test, with positive and negative cases (different package,
 different method, already-migrated arity), lives in

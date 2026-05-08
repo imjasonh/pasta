@@ -71,6 +71,22 @@ say "every LHS expression is an identifier" without a custom predicate.
 DSL change: `Predicate.args` would need to allow nested predicate
 specs; today it's `[]string`.
 
+### `same_object` predicate (plan.md §3.4)
+**Effort:** L. **Source:** plan.md §3.4 / §5.
+Checks that two captured identifiers resolve to the SAME declaration
+(not just same text). This is what `same_ident` should be when scope
+matters — but it requires full symbol resolution, which is per-language
+adapter territory. Today `same_ident` does text equality, which is
+adequate within a single function but conflates shadowed names.
+
+### `file_match` filtering (plan.md §3.5)
+**Effort:** S. **Source:** plan.md §3.5.
+The schema declares `file_match?: [...string]` on `#Rule` for filename
+globs (e.g. `["*_test.go"]` to restrict a rule to test files). The
+runtime currently ignores this field. Wiring it through the engine is
+straightforward: skip rules whose `file_match` doesn't include the
+current file's basename.
+
 ### `subtree_has_type` / `subtree_lacks_type`
 **Effort:** S. **Source:** conversation while writing rust_unsafe_no_safety.
 A predicate `{op: "subtree_has", args: [@cap, "type"]}` that reports
@@ -223,6 +239,45 @@ Today fact `kinds` are flat strings across all loaded analyzers. Two
 analyzers using `kind: "tainted"` for different purposes would
 collide. A scoped form like `analyzerName.kind` would prevent it. Low
 priority until two analyzers actually conflict.
+
+### Fact `scope` field (plan.md §8.1)
+**Effort:** M. **Source:** plan.md §8.1.
+`#Fact` could grow a `scope: "node" | "file" | "package" | "module"`
+field that controls how the runtime keys the fact. Most facts today
+are implicitly node-scoped (with the by-name secondary index acting
+as a poor file-scope). Explicit scope makes the storage strategy
+declarative and ties into cross-file work.
+
+---
+
+## Rewrite escape hatches (plan.md §8.3)
+
+The current edit primitives (`target`/`replacement`,
+`position`/`anchor`, `delete_from`/`delete_to`, `within`,
+`trim_start`/`trim_end`) cover most syntactic rewrites. They struggle
+when the new code can't be assembled by stitching captures and
+literals — e.g. generating import statements, computing
+correctly-quoted JSON for a captured value, or producing different
+text per call site.
+
+Options worth exploring (none yet implemented):
+
+1. **CUE expressions in replacement text.** `replacement: "if \(strings.ToUpper(@name)) ..."`.
+   Constrains computation to what CUE can express, which is
+   surprisingly powerful (string ops, comprehensions). Plan.md §8.3
+   suggests this.
+
+2. **Starlark snippets per rewrite.** Bigger surface area, escapes
+   the CUE-only invariant. plan.md §8.3 mentions this as a possibility
+   but it's significant scope and complicates security/sandboxing.
+
+3. **Transform functions registered in Go.** Rules reference a
+   transform by name; Go-side registry computes the new text. Lowest
+   effort, breaks the "rules are pure CUE" promise. Useful escape
+   hatch for rare cases (one or two transforms instead of a generic
+   mechanism).
+
+Pick when a real use case forces the choice.
 
 ---
 

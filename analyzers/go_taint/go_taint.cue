@@ -15,6 +15,7 @@ package go_taint
 import (
 	"pasta.dev/schema"
 	golang "pasta.dev/lang/go"
+	gopat "pasta.dev/patterns/go"
 )
 
 go_taint: schema.#Analyzer & {
@@ -40,24 +41,13 @@ go_taint: schema.#Analyzer & {
 				fields: {
 					left: {
 						node: "expression_list"
-						children: [{capture: "lhs", pattern: {node: "identifier"}}]
+						children: [{capture: "lhs", pattern: gopat.Identifier}]
 					}
 					right: {
 						node: "expression_list"
 						children: [{
 							capture: "rhs"
-							pattern: {
-								node: "call_expression"
-								fields: {
-									function: {
-										node: "selector_expression"
-										fields: {
-											operand: {capture: "pkg", pattern: {node: "identifier"}}
-											field:   {capture: "fn", pattern: {node: "field_identifier"}}
-										}
-									}
-								}
-							}
+							pattern: gopat.PackageCall
 						}]
 					}
 				}
@@ -84,11 +74,11 @@ go_taint: schema.#Analyzer & {
 				fields: {
 					left: {
 						node: "expression_list"
-						children: [{capture: "lhs", pattern: {node: "identifier"}}]
+						children: [{capture: "lhs", pattern: gopat.Identifier}]
 					}
 					right: {
 						node: "expression_list"
-						children: [{capture: "rhs", pattern: {node: "identifier"}}]
+						children: [{capture: "rhs", pattern: gopat.Identifier}]
 					}
 				}
 				where: [{op: "has_fact", args: ["@rhs", "tainted"]}]
@@ -107,20 +97,10 @@ go_taint: schema.#Analyzer & {
 			requires: ["tainted"]
 			provides: []
 
-			match: {
-				node: "call_expression"
-				fields: {
-					function: {
-						node: "selector_expression"
-						fields: {
-							operand: {capture: "pkg", pattern: {node: "identifier"}}
-							field:   {capture: "fn", pattern: {node: "field_identifier"}}
-						}
-					}
-					arguments: {
-						node: "argument_list"
-						children: [{capture: "arg", pattern: {node: "identifier"}}]
-					}
+			match: gopat.PackageCall & {
+				fields: arguments: {
+					node: "argument_list"
+					children: [{capture: "arg", pattern: gopat.Identifier}]
 				}
 				where: [
 					{op: "eq", args: ["@pkg", "exec"]},

@@ -202,17 +202,65 @@ func (c *Child) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Predicate is a constraint evaluated during matching.
-type Predicate struct {
-	Op   string   `json:"op"`
-	Args []string `json:"args"`
+// Arg is one argument to a predicate or precondition: either a string
+// (capture ref, regex, literal) or a list of strings (alternatives,
+// e.g. node-type lists). Custom JSON unmarshaling routes to the right
+// field based on whether the JSON value is a string or an array.
+type Arg struct {
+	Str  string
+	List []string
 }
 
-// Precondition is a semantic check delegated to the language adapter.
+// UnmarshalJSON parses either "foo" → Arg{Str: "foo"} or
+// ["foo", "bar"] → Arg{List: ["foo", "bar"]}. Anything else is an
+// error.
+func (a *Arg) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	if b[0] == '[' {
+		return json.Unmarshal(b, &a.List)
+	}
+	return json.Unmarshal(b, &a.Str)
+}
+
+// MarshalJSON emits the string form when only Str is set, otherwise the
+// list form. (Both empty serializes as the empty string.)
+func (a Arg) MarshalJSON() ([]byte, error) {
+	if a.List != nil {
+		return json.Marshal(a.List)
+	}
+	return json.Marshal(a.Str)
+}
+
+// IsList reports whether this Arg holds a list value.
+func (a Arg) IsList() bool { return a.List != nil }
+
+// StringList returns the list form, or a single-element list wrapping
+// the string form, or nil if both are empty. Use for predicates that
+// accept either shape.
+func (a Arg) StringList() []string {
+	if a.List != nil {
+		return a.List
+	}
+	if a.Str == "" {
+		return nil
+	}
+	return []string{a.Str}
+}
+
+// Predicate is a constraint evaluated during matching. Args are
+// positional.
+type Predicate struct {
+	Op   string `json:"op"`
+	Args []Arg  `json:"args"`
+}
+
+// Precondition is a semantic check evaluated by the predicate registry.
 type Precondition struct {
-	Check    string            `json:"check"`
-	Args     map[string]string `json:"args"`
-	Optional bool              `json:"optional,omitempty"`
+	Check    string         `json:"check"`
+	Args     map[string]Arg `json:"args"`
+	Optional bool           `json:"optional,omitempty"`
 }
 
 // Diagnostic is what the rule reports when it matches.

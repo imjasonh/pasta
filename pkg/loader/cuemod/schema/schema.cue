@@ -46,7 +46,9 @@ package schema
 		"empty" |
 		"named_child_count" |
 		"prev_sibling_matches"
-	args: [...string]
+	// Positional args. Each is either a string (capture ref, regex,
+	// literal) or a list of strings (e.g. node-type alternatives).
+	args: [...string | [...string]]
 	optional?: bool | *false
 }
 
@@ -103,7 +105,9 @@ package schema
 
 #Precondition: {
 	check: string
-	args: {[string]: string}
+	// Each arg is either a string (a capture ref like "@foo", a regex,
+	// or a literal) or a list of strings (e.g. `ancestor_types: [...]`).
+	args: {[string]: string | [...string]}
 	optional?: bool | *false
 }
 

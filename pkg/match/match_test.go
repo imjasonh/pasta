@@ -180,8 +180,8 @@ func bar() (int, error) { return 0, nil }
 									"right":    {Capture: "cond_y"},
 								},
 								Where: []dsl.Predicate{
-									{Op: "matches", Args: []string{"@cond_op", "==|!="}},
-									{Op: "nil_comparison", Args: []string{"@cond_x", "@cond_y", "@lhs_list"}},
+									{Op: "matches", Args: []dsl.Arg{{Str: "@cond_op"}, {Str: "==|!="}}},
+									{Op: "nil_comparison", Args: []dsl.Arg{{Str: "@cond_x"}, {Str: "@cond_y"}, {Str: "@lhs_list"}}},
 								},
 							},
 						},
@@ -381,8 +381,8 @@ func iferrConditionPattern() *dsl.Pattern {
 									"right":    {Capture: "cond_y"},
 								},
 								Where: []dsl.Predicate{
-									{Op: "matches", Args: []string{"@cond_op", "==|!="}},
-									{Op: "nil_comparison", Args: []string{"@cond_x", "@cond_y", "@lhs_list"}},
+									{Op: "matches", Args: []dsl.Arg{{Str: "@cond_op"}, {Str: "==|!="}}},
+									{Op: "nil_comparison", Args: []dsl.Arg{{Str: "@cond_x"}, {Str: "@cond_y"}, {Str: "@lhs_list"}}},
 								},
 							},
 						},

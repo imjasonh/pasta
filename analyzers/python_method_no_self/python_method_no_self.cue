@@ -16,6 +16,7 @@ package python_method_no_self
 import (
 	"pasta.dev/schema"
 	pylang "pasta.dev/lang/python"
+	pypat "pasta.dev/patterns/python"
 )
 
 python_method_no_self: schema.#Analyzer & {
@@ -39,7 +40,7 @@ python_method_no_self: schema.#Analyzer & {
 			}
 			where: [
 				// Only inside class definitions.
-				{op: "ancestor_is", args: ["@_root", "class_definition"]},
+				{op: "ancestor_is", args: ["@_root", pypat.ClassLikeTypes]},
 				// First param isn't self/cls. The empty-params case
 				// `()` also matches (regex doesn't match it, so
 				// not_matches fires).

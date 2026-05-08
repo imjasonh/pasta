@@ -28,6 +28,7 @@ package go_iferr
 import (
 	"pasta.dev/schema"
 	golang "pasta.dev/lang/go"
+	gopat "pasta.dev/patterns/go"
 )
 
 go_iferr: schema.#Analyzer & {
@@ -36,9 +37,6 @@ go_iferr: schema.#Analyzer & {
 	doc:     "Suggests inlining error assignments into if conditions where possible"
 
 	facts: {}
-
-	// Reusable fragment: tree-sitter-go function-like nodes.
-	let _go_funcs = "function_declaration|method_declaration|func_literal"
 
 	rules: {
 		// ============================================================
@@ -57,7 +55,7 @@ go_iferr: schema.#Analyzer & {
 			provides: []
 
 			match: {
-				node: ["statement_list"]
+				node: gopat.StmtListContainers
 				adjacent: [
 					{
 						capture: "assign"
@@ -141,7 +139,7 @@ go_iferr: schema.#Analyzer & {
 			provides: []
 
 			match: {
-				node: ["statement_list"]
+				node: gopat.StmtListContainers
 				adjacent: [
 					{
 						capture: "assign"
@@ -202,7 +200,7 @@ go_iferr: schema.#Analyzer & {
 					check: "ancestor_field_subtree_no_ident"
 					args: {
 						anchor:         "@if_stmt"
-						ancestor_types: _go_funcs
+						ancestor_types: gopat.FunctionLikeTypes
 						field:          "body"
 						source:         "@lhs_list"
 						exclude_start:  "@var_decl|@assign"
@@ -217,7 +215,7 @@ go_iferr: schema.#Analyzer & {
 					check: "ancestor_field_subtree_no_ident"
 					args: {
 						anchor:         "@if_stmt"
-						ancestor_types: _go_funcs
+						ancestor_types: gopat.FunctionLikeTypes
 						field:          "result"
 						source:         "@lhs_list"
 					}

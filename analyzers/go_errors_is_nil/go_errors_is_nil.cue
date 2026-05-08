@@ -8,6 +8,7 @@ package go_errors_is_nil
 import (
 	"pasta.dev/schema"
 	golang "pasta.dev/lang/go"
+	gopat "pasta.dev/patterns/go"
 )
 
 go_errors_is_nil: schema.#Analyzer & {
@@ -23,23 +24,13 @@ go_errors_is_nil: schema.#Analyzer & {
 		requires: []
 		provides: []
 
-		match: {
-			node: "call_expression"
-			fields: {
-				function: {
-					node: "selector_expression"
-					fields: {
-						operand: {capture: "pkg", pattern: {node: "identifier"}}
-						field:   {capture: "fn", pattern: {node: "field_identifier"}}
-					}
-				}
-				arguments: {
-					node: "argument_list"
-					children: [
-						{capture: "err"},
-						{node: "nil"},
-					]
-				}
+		match: gopat.PackageCall & {
+			fields: arguments: {
+				node: "argument_list"
+				children: [
+					{capture: "err"},
+					{node: "nil"},
+				]
 			}
 			where: [
 				{op: "eq", args: ["@pkg", "errors"]},

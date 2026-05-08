@@ -8,11 +8,41 @@ import (
 	"github.com/imjasonh/pasta/pkg/tsutil"
 )
 
-// PredicateFunc evaluates a `where` predicate. Args are positional.
-type PredicateFunc func(args []string, env *Env, caps Captures) bool
+// PredicateFunc evaluates a `where` predicate. Args are positional;
+// each is a dsl.Arg (sum of string and []string).
+type PredicateFunc func(args []dsl.Arg, env *Env, caps Captures) bool
+
+// posStr returns the string form of args[i], or "" if out of range or
+// list-valued. Predicates that accept either form should use posList.
+func posStr(args []dsl.Arg, i int) string {
+	if i < 0 || i >= len(args) {
+		return ""
+	}
+	return args[i].Str
+}
+
+// posList returns args[i] as a list of strings, normalizing a single
+// string to a one-element list. Used by predicates whose arg accepts
+// either a string or a list of alternatives.
+func posList(args []dsl.Arg, i int) []string {
+	if i < 0 || i >= len(args) {
+		return nil
+	}
+	return args[i].StringList()
+}
 
 // CheckFunc evaluates a `pre_conditions` check. Args are named.
-type CheckFunc func(args map[string]string, env *Env, caps Captures) bool
+type CheckFunc func(args map[string]dsl.Arg, env *Env, caps Captures) bool
+
+// argStr returns the string form of args[key], or "" if absent or list-valued.
+func argStr(args map[string]dsl.Arg, key string) string {
+	return args[key].Str
+}
+
+// argList returns args[key] as a list of strings.
+func argList(args map[string]dsl.Arg, key string) []string {
+	return args[key].StringList()
+}
 
 // PredicateRegistry holds both `where` predicates (positional) and
 // `pre_conditions` checks (named).
@@ -31,7 +61,7 @@ func (r PredicateRegistry) Eval(p dsl.Predicate, env *Env, caps Captures) bool {
 }
 
 // EvalCheck dispatches a `pre_conditions` check by name.
-func (r PredicateRegistry) EvalCheck(name string, args map[string]string, env *Env, caps Captures) bool {
+func (r PredicateRegistry) EvalCheck(name string, args map[string]dsl.Arg, env *Env, caps Captures) bool {
 	fn, ok := r.Checks[name]
 	if !ok {
 		return false
@@ -103,75 +133,75 @@ func resolveCapture(ref string, caps Captures) (tsutil.Node, bool) {
 // Where predicates (positional args)
 // ============================================================================
 
-func predEq(args []string, env *Env, caps Captures) bool {
+func predEq(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	return n.Text() == args[1]
+	return n.Text() == posStr(args, 1)
 }
 
-func predNeq(args []string, env *Env, caps Captures) bool {
+func predNeq(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	return n.Text() != args[1]
+	return n.Text() != posStr(args, 1)
 }
 
-func predMatches(args []string, env *Env, caps Captures) bool {
+func predMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	re, err := regexp.Compile(args[1])
+	re, err := regexp.Compile(posStr(args, 1))
 	if err != nil {
 		return false
 	}
 	return re.MatchString(n.Text())
 }
 
-func predNotMatches(args []string, env *Env, caps Captures) bool {
+func predNotMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	re, err := regexp.Compile(args[1])
+	re, err := regexp.Compile(posStr(args, 1))
 	if err != nil {
 		return false
 	}
 	return !re.MatchString(n.Text())
 }
 
-func predTokenEq(args []string, env *Env, caps Captures) bool {
+func predTokenEq(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	return strings.TrimSpace(n.Text()) == args[1]
+	return strings.TrimSpace(n.Text()) == posStr(args, 1)
 }
 
-func predSameIdent(args []string, env *Env, caps Captures) bool {
+func predSameIdent(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	a, ok1 := resolveCapture(args[0], caps)
-	b, ok2 := resolveCapture(args[1], caps)
+	a, ok1 := resolveCapture(posStr(args, 0), caps)
+	b, ok2 := resolveCapture(posStr(args, 1), caps)
 	if !ok1 || !ok2 {
 		return false
 	}
@@ -181,13 +211,13 @@ func predSameIdent(args []string, env *Env, caps Captures) bool {
 // predNilComparison: [@x, @y, @list].
 // One of @x or @y is the literal nil node; the other is an identifier
 // whose text equals the last non-blank identifier in @list.
-func predNilComparison(args []string, env *Env, caps Captures) bool {
+func predNilComparison(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 3 {
 		return false
 	}
-	x, ok1 := resolveCapture(args[0], caps)
-	y, ok2 := resolveCapture(args[1], caps)
-	list, ok3 := resolveCapture(args[2], caps)
+	x, ok1 := resolveCapture(posStr(args, 0), caps)
+	y, ok2 := resolveCapture(posStr(args, 1), caps)
+	list, ok3 := resolveCapture(posStr(args, 2), caps)
 	if !ok1 || !ok2 || !ok3 {
 		return false
 	}
@@ -212,12 +242,12 @@ func predNilComparison(args []string, env *Env, caps Captures) bool {
 	return other.Text() == target
 }
 
-func predLastNonBlank(args []string, env *Env, caps Captures) bool {
+func predLastNonBlank(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	cap0, ok1 := resolveCapture(args[0], caps)
-	list, ok2 := resolveCapture(args[1], caps)
+	cap0, ok1 := resolveCapture(posStr(args, 0), caps)
+	list, ok2 := resolveCapture(posStr(args, 1), caps)
 	if !ok1 || !ok2 {
 		return false
 	}
@@ -242,21 +272,24 @@ func lastNonBlankIdentText(list tsutil.Node) string {
 	return ""
 }
 
-func predStubTrue(args []string, env *Env, caps Captures) bool  { return true }
-func predStubFalse(args []string, env *Env, caps Captures) bool { return false }
+func predStubTrue(args []dsl.Arg, env *Env, caps Captures) bool  { return true }
+func predStubFalse(args []dsl.Arg, env *Env, caps Captures) bool { return false }
 
-// predAncestorIs: [@cap, "type1|type2|..."] — true if any ancestor of
-// @cap (walking up via Parent()) has a type in the "|"-separated list.
-// Stops at the root.
-func predAncestorIs(args []string, env *Env, caps Captures) bool {
+// predAncestorIs: [@cap, types]. types is either a list of strings
+// (preferred) or a "|"-separated string (back-compat). Returns true if
+// any ancestor of @cap has a type matching one of the alternatives.
+func predAncestorIs(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	types := splitOrInline(args[1])
+	types := posList(args, 1)
+	if len(types) == 0 {
+		return false
+	}
 	for cur := n.Parent(); cur.IsValid(); cur = cur.Parent() {
 		t := cur.Type()
 		for _, want := range types {
@@ -288,36 +321,35 @@ func splitOrInline(s string) []string {
 // child bound to the given field name. (Same effect as the
 // `absent_fields` pattern field, but usable inside a `where` clause —
 // e.g. for conditional checks based on shape.)
-func predFieldAbsent(args []string, env *Env, caps Captures) bool {
+func predFieldAbsent(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	return !n.HasFieldName(args[1])
+	return !n.HasFieldName(posStr(args, 1))
 }
 
 // predStmtIndexDelta: [@a, @b, "N"] — true if @a and @b are siblings
 // in the same parent and exactly N positions apart in the parent's
-// named-children list. Useful for "second/third statement after X"
-// patterns where simple adjacency isn't expressive enough.
-func predStmtIndexDelta(args []string, env *Env, caps Captures) bool {
+// named-children list.
+func predStmtIndexDelta(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 3 {
 		return false
 	}
-	a, ok := resolveCapture(args[0], caps)
+	a, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	b, ok := resolveCapture(args[1], caps)
+	b, ok := resolveCapture(posStr(args, 1), caps)
 	if !ok {
 		return false
 	}
 	want := 0
 	sign := 1
-	s := args[2]
+	s := posStr(args, 2)
 	if len(s) > 0 && s[0] == '-' {
 		sign = -1
 		s = s[1:]
@@ -358,42 +390,41 @@ func predStmtIndexDelta(args []string, env *Env, caps Captures) bool {
 
 // predHasFact: [@cap, "kind"] — true if the captured node has a fact
 // of the given kind in the env's FactStore.
-func predHasFact(args []string, env *Env, caps Captures) bool {
+func predHasFact(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
 	if env.FactStore == nil {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
-	return env.FactStore.Has(n, args[1])
+	return env.FactStore.Has(n, posStr(args, 1))
 }
 
 // predNotHasFact is the inverse of predHasFact.
-func predNotHasFact(args []string, env *Env, caps Captures) bool {
+func predNotHasFact(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return true
 	}
 	if env.FactStore == nil {
 		return true
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return true
 	}
-	return !env.FactStore.Has(n, args[1])
+	return !env.FactStore.Has(n, posStr(args, 1))
 }
 
 // predEmptyNamedChildren: [@cap] — true if @cap has zero named children.
-// Useful for matching empty blocks, empty argument lists, etc.
-func predEmptyNamedChildren(args []string, env *Env, caps Captures) bool {
+func predEmptyNamedChildren(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 1 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
@@ -403,16 +434,11 @@ func predEmptyNamedChildren(args []string, env *Env, caps Captures) bool {
 // predPrevSiblingMatches: [@cap, "regex"] — true if the named child of
 // @cap's parent immediately preceding @cap exists AND its source text
 // matches the given regex.
-//
-// Unlike `adjacent` (which iterates the language's StmtList provider
-// and skips comments), this predicate walks ALL named children — so it
-// can find docstring-style comments or attribute markers that
-// immediately precede a declaration.
-func predPrevSiblingMatches(args []string, env *Env, caps Captures) bool {
+func predPrevSiblingMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
@@ -431,7 +457,7 @@ func predPrevSiblingMatches(args []string, env *Env, caps Captures) bool {
 	if !prev.IsValid() {
 		return false
 	}
-	re, err := regexp.Compile(args[1])
+	re, err := regexp.Compile(posStr(args, 1))
 	if err != nil {
 		return false
 	}
@@ -440,16 +466,16 @@ func predPrevSiblingMatches(args []string, env *Env, caps Captures) bool {
 
 // predNamedChildCount: [@cap, "N"] — true if @cap has exactly N named
 // children.
-func predNamedChildCount(args []string, env *Env, caps Captures) bool {
+func predNamedChildCount(args []dsl.Arg, env *Env, caps Captures) bool {
 	if len(args) != 2 {
 		return false
 	}
-	n, ok := resolveCapture(args[0], caps)
+	n, ok := resolveCapture(posStr(args, 0), caps)
 	if !ok {
 		return false
 	}
 	want := 0
-	for _, c := range args[1] {
+	for _, c := range posStr(args, 1) {
 		if c < '0' || c > '9' {
 			return false
 		}
@@ -471,12 +497,12 @@ func predNamedChildCount(args []string, env *Env, caps Captures) bool {
 //
 // Used by iferr's all_idents_lhs to verify the LHS is all plain
 // identifiers (no selectors, indices, etc.).
-func checkAllChildrenType(args map[string]string, env *Env, caps Captures) bool {
-	cap0, ok := resolveCapture(args["cap"], caps)
+func checkAllChildrenType(args map[string]dsl.Arg, env *Env, caps Captures) bool {
+	cap0, ok := resolveCapture(argStr(args, "cap"), caps)
 	if !ok {
 		return false
 	}
-	want := args["type"]
+	want := argStr(args, "type")
 	if want == "" {
 		return false
 	}
@@ -500,12 +526,12 @@ func checkAllChildrenType(args map[string]string, env *Env, caps Captures) bool 
 //	         against; "_" is excluded.
 //
 // Used by iferr's not_used_after with scope=block.
-func checkSiblingsAfterNoIdent(args map[string]string, env *Env, caps Captures) bool {
-	anchor, ok := resolveCapture(args["anchor"], caps)
+func checkSiblingsAfterNoIdent(args map[string]dsl.Arg, env *Env, caps Captures) bool {
+	anchor, ok := resolveCapture(argStr(args, "anchor"), caps)
 	if !ok {
 		return false
 	}
-	src, ok := resolveCapture(args["source"], caps)
+	src, ok := resolveCapture(argStr(args, "source"), caps)
 	if !ok {
 		return false
 	}
@@ -530,17 +556,17 @@ func checkSiblingsAfterNoIdent(args map[string]string, env *Env, caps Captures) 
 }
 
 // checkAncestorFieldSubtreeNoIdent: walk up from @anchor; find the first
-// ancestor whose type is in `ancestor_types` (a "|"-separated list);
-// navigate to the named field given by `field`; verify no descendant
-// identifier in that subtree has text matching a non-blank identifier
-// text in @source's named children (or any descendant's text — see
-// `source_recursive`). Optionally exclude a byte range.
+// ancestor whose type is in the `ancestor_types` list; navigate to the
+// named field given by `field`; verify no descendant identifier in
+// that subtree has text matching a non-blank identifier text in
+// @source's named children. Optionally exclude a byte range.
 //
 // Args:
 //
 //	anchor          — capture ref.
-//	ancestor_types  — "|"-separated tree-sitter types (e.g.
-//	                  "function_declaration|method_declaration|func_literal").
+//	ancestor_types  — list of tree-sitter types (e.g.
+//	                  ["function_declaration", "method_declaration",
+//	                   "func_literal"]).
 //	field           — named field of the ancestor (e.g. "body" or "result").
 //	source          — capture ref providing the names to look for.
 //	exclude_start?  — capture ref (or fallback list); excludes nodes whose
@@ -549,25 +575,25 @@ func checkSiblingsAfterNoIdent(args map[string]string, env *Env, caps Captures) 
 //	exclude_end?    — capture ref (or fallback list).
 //
 // Used by iferr's not_used_after (function scope) and not_named_result.
-func checkAncestorFieldSubtreeNoIdent(args map[string]string, env *Env, caps Captures) bool {
-	anchor, ok := resolveCapture(args["anchor"], caps)
+func checkAncestorFieldSubtreeNoIdent(args map[string]dsl.Arg, env *Env, caps Captures) bool {
+	anchor, ok := resolveCapture(argStr(args, "anchor"), caps)
 	if !ok {
 		return false
 	}
-	types := splitOr(args["ancestor_types"])
+	types := argList(args, "ancestor_types")
 	if len(types) == 0 {
 		return false
 	}
-	field := args["field"]
-	src, ok := resolveCapture(args["source"], caps)
+	field := argStr(args, "field")
+	src, ok := resolveCapture(argStr(args, "source"), caps)
 	if !ok {
 		return false
 	}
 
 	var exStart, exEnd uint32
 	hasExcl := false
-	if s, sok := resolveCapture(args["exclude_start"], caps); sok {
-		if e, eok := resolveCapture(args["exclude_end"], caps); eok {
+	if s, sok := resolveCapture(argStr(args, "exclude_start"), caps); sok {
+		if e, eok := resolveCapture(argStr(args, "exclude_end"), caps); eok {
 			exStart = s.StartByte()
 			exEnd = e.EndByte()
 			hasExcl = true
@@ -615,17 +641,17 @@ func checkAncestorFieldSubtreeNoIdent(args map[string]string, env *Env, caps Cap
 //
 // Used by iferr's matching_var_decl. Marked optional in the rule so an
 // unbound @decl (no preceding declaration captured) doesn't fail.
-func checkDeclMatchesIdents(args map[string]string, env *Env, caps Captures) bool {
-	decl, ok := resolveCapture(args["decl"], caps)
+func checkDeclMatchesIdents(args map[string]dsl.Arg, env *Env, caps Captures) bool {
+	decl, ok := resolveCapture(argStr(args, "decl"), caps)
 	if !ok {
 		return false
 	}
-	src, ok := resolveCapture(args["source"], caps)
+	src, ok := resolveCapture(argStr(args, "source"), caps)
 	if !ok {
 		return false
 	}
-	specType := args["spec_type"]
-	valueField := args["value_field"]
+	specType := argStr(args, "spec_type")
+	valueField := argStr(args, "value_field")
 
 	specs := []tsutil.Node{}
 	for _, c := range decl.NamedChildren() {

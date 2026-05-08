@@ -42,7 +42,7 @@ func f(x *int) bool {
 						"right":    {Node: []string{"nil"}},
 					},
 					Where: []dsl.Predicate{
-						{Op: "token_eq", Args: []string{"@op", "=="}},
+						{Op: "token_eq", Args: []dsl.Arg{{Str: "@op"}, {Str: "=="}}},
 					},
 				},
 			},

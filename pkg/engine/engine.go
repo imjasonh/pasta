@@ -225,7 +225,12 @@ func runPreconditions(rule *dsl.Rule, env *match.Env, caps match.Captures) bool 
 
 func preconditionCapturesBound(pc dsl.Precondition, caps match.Captures) bool {
 	for _, v := range pc.Args {
-		if !atRefHasBoundCapture(v, caps) {
+		// Lists don't carry @capture refs, so they don't gate the
+		// optional check; only the string form does.
+		if v.IsList() {
+			continue
+		}
+		if !atRefHasBoundCapture(v.Str, caps) {
 			return false
 		}
 	}

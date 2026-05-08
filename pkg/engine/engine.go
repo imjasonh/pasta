@@ -5,10 +5,10 @@ package engine
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/imjasonh/pasta/pkg/dsl"
 	"github.com/imjasonh/pasta/pkg/effect"
+	"github.com/imjasonh/pasta/pkg/factstore"
 	"github.com/imjasonh/pasta/pkg/lang"
 	"github.com/imjasonh/pasta/pkg/match"
 	"github.com/imjasonh/pasta/pkg/tsutil"
@@ -20,12 +20,17 @@ type Result struct {
 	Ops         []effect.Op
 }
 
-// Run parses src with l's tree-sitter grammar, runs each analyzer's rules
-// in declaration order, and returns aggregated diagnostics and edit ops.
-//
-// Rules whose `languages` list does not include l.Name (and is not "*")
-// are silently skipped. Pre-conditions are evaluated through the same
-// predicate registry as `where` clauses.
+// scheduledRule pairs a rule with the analyzer that owns it, so we can
+// schedule rules globally across analyzers.
+type scheduledRule struct {
+	analyzer *dsl.Analyzer
+	name     string
+	rule     dsl.Rule
+}
+
+// Run parses src with l's tree-sitter grammar, runs every applicable
+// rule across the given analyzers in topological order (by
+// requires/provides), and returns aggregated diagnostics and edit ops.
 func Run(
 	ctx context.Context,
 	src []byte,
@@ -38,61 +43,170 @@ func Run(
 	}
 	defer tree.Release()
 
+	store := factstore.New()
 	env := &match.Env{
 		StmtList:   l.StmtList,
 		Predicates: match.DefaultRegistry(),
+		FactStore:  store,
+	}
+
+	scheduled, err := scheduleRules(analyzers, l)
+	if err != nil {
+		return Result{}, err
 	}
 
 	var res Result
-	for _, a := range analyzers {
-		names := make([]string, 0, len(a.Rules))
-		for k := range a.Rules {
-			names = append(names, k)
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			rule := a.Rules[name]
-			if !ruleAppliesToLanguage(&rule, l) {
+	for _, sr := range scheduled {
+		rule := sr.rule
+		matches := match.FindAll(&rule.Match, root, env)
+		for _, m := range matches {
+			if !runPreconditions(&rule, env, m.Captures) {
 				continue
 			}
-			matches := match.FindAll(&rule.Match, root, env)
-			for _, m := range matches {
-				if !runPreconditions(&rule, env, m.Captures) {
-					continue
-				}
-				diagAnchor := pickDiagAnchor(&rule, m)
-				if rule.Diagnose != nil {
-					res.Diagnostics = append(res.Diagnostics, effect.BuildDiagnostic(rule.Name, rule.Diagnose, diagAnchor, m.Captures))
-				}
-				if rule.Rewrite != nil {
-					var rwOpts dsl.RewriteOpts
-					if rule.RewriteOpts != nil {
-						rwOpts = *rule.RewriteOpts
-					}
-					adjacentSeq := captureNamesFromAdjacent(rule.Match.Adjacent)
-					ops, err := effect.BuildOps(rule.Name, rule.Rewrite, effect.BuildContext{
-						Captures:    m.Captures,
-						AdjacentSeq: adjacentSeq,
-						RewriteOpts: rwOpts,
-						Root:        root,
-					})
-					if err != nil {
-						return res, fmt.Errorf("build ops for rule %s: %w", rule.Name, err)
-					}
-					res.Ops = append(res.Ops, ops...)
-				}
+			diagAnchor := pickDiagAnchor(&rule, m)
+			if rule.Diagnose != nil {
+				res.Diagnostics = append(res.Diagnostics, effect.BuildDiagnostic(rule.Name, rule.Diagnose, diagAnchor, m.Captures))
 			}
+			if rule.Rewrite != nil {
+				var rwOpts dsl.RewriteOpts
+				if rule.RewriteOpts != nil {
+					rwOpts = *rule.RewriteOpts
+				}
+				adjacentSeq := captureNamesFromAdjacent(rule.Match.Adjacent)
+				ops, err := effect.BuildOps(rule.Name, rule.Rewrite, effect.BuildContext{
+					Captures:    m.Captures,
+					AdjacentSeq: adjacentSeq,
+					RewriteOpts: rwOpts,
+					Root:        root,
+				})
+				if err != nil {
+					return res, fmt.Errorf("build ops for rule %s: %w", rule.Name, err)
+				}
+				res.Ops = append(res.Ops, ops...)
+			}
+			emitFacts(&rule, m, store)
 		}
 	}
 	return res, nil
 }
 
+// emitFacts records each fact declared in the rule's `emit` clause,
+// resolving the `attach` capture to the node the fact is attached to.
+// Payloads with `@name` interpolation are flattened to plain strings.
+func emitFacts(rule *dsl.Rule, m match.Match, store *factstore.Store) {
+	for _, em := range rule.Emit {
+		anchor, ok := m.Captures[em.Attach]
+		if !ok {
+			continue
+		}
+		payload := flattenPayload(em.Payload, m.Captures)
+		store.Emit(em.Fact, anchor, payload)
+	}
+}
+
+// flattenPayload converts a CUE-decoded payload (any) into a flat
+// map[string]any with @capture interpolations resolved.
+func flattenPayload(p any, caps match.Captures) map[string]any {
+	m, ok := p.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if s, ok := v.(string); ok {
+			out[k] = effect.Interpolate(s, caps)
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// scheduleRules collects every rule applicable to language l across all
+// analyzers and orders them topologically by requires/provides. A rule
+// that requires fact F runs after every rule that provides F (within
+// the same Run). Cycles error out — fixpoint groups are future work.
+func scheduleRules(analyzers []*dsl.Analyzer, l lang.Language) ([]scheduledRule, error) {
+	var all []scheduledRule
+	for _, a := range analyzers {
+		for name, rule := range a.Rules {
+			if !ruleAppliesToLanguage(&rule, l) {
+				continue
+			}
+			all = append(all, scheduledRule{analyzer: a, name: name, rule: rule})
+		}
+	}
+
+	// Index rules by what they provide.
+	providers := map[string][]int{}
+	for i, r := range all {
+		for _, f := range r.rule.Provides {
+			providers[f] = append(providers[f], i)
+		}
+	}
+
+	// Build edges: for each rule, depend on every rule providing what
+	// it requires. Self-loops are dropped (a rule that requires its own
+	// provides is permitted; it just runs once with an empty store).
+	indeg := make([]int, len(all))
+	out := make([][]int, len(all))
+	for i, r := range all {
+		for _, req := range r.rule.Requires {
+			for _, j := range providers[req] {
+				if j == i {
+					continue
+				}
+				out[j] = append(out[j], i)
+				indeg[i]++
+			}
+		}
+	}
+
+	// Kahn's algorithm. Within ready set, prefer the rule whose
+	// (analyzer, rule-name) sorts first, for deterministic ordering.
+	var ready []int
+	for i := range all {
+		if indeg[i] == 0 {
+			ready = append(ready, i)
+		}
+	}
+	sortReady(ready, all)
+
+	var ordered []scheduledRule
+	for len(ready) > 0 {
+		i := ready[0]
+		ready = ready[1:]
+		ordered = append(ordered, all[i])
+		for _, j := range out[i] {
+			indeg[j]--
+			if indeg[j] == 0 {
+				ready = append(ready, j)
+			}
+		}
+		sortReady(ready, all)
+	}
+	if len(ordered) != len(all) {
+		return nil, fmt.Errorf("rule dependency cycle: SCC scheduling not yet implemented")
+	}
+	return ordered, nil
+}
+
+func sortReady(ready []int, all []scheduledRule) {
+	for i := 1; i < len(ready); i++ {
+		for j := i; j > 0; j-- {
+			a, b := ready[j-1], ready[j]
+			if all[a].analyzer.Name > all[b].analyzer.Name ||
+				(all[a].analyzer.Name == all[b].analyzer.Name && all[a].name > all[b].name) {
+				ready[j-1], ready[j] = ready[j], ready[j-1]
+				continue
+			}
+			break
+		}
+	}
+}
+
 // ruleAppliesToLanguage returns true if the rule's `languages` list
-// includes the given language by NAME or by GRAMMAR. This lets rules
-// written for `["go"]` automatically apply to any user-defined language
-// alias whose grammar is Go (e.g. an external `notgo` lang for `.notgo`
-// files). To target a specific alias and not all Go-grammar languages,
-// list the language name explicitly.
+// includes the given language by NAME or by GRAMMAR.
 func ruleAppliesToLanguage(rule *dsl.Rule, l lang.Language) bool {
 	if len(rule.Languages) == 0 {
 		return true
@@ -106,10 +220,6 @@ func ruleAppliesToLanguage(rule *dsl.Rule, l lang.Language) bool {
 }
 
 // pickDiagAnchor selects the node a diagnostic should be reported at.
-// Heuristic: if the rule has an `adjacent` clause, use the first
-// adjacent element's top-level capture (typically the "main" node the
-// diagnostic refers to, e.g. "assign" in iferr). Otherwise fall back to
-// the rule's matched root.
 func pickDiagAnchor(rule *dsl.Rule, m match.Match) tsutil.Node {
 	if len(rule.Match.Adjacent) > 0 {
 		first := rule.Match.Adjacent[0]
@@ -122,10 +232,6 @@ func pickDiagAnchor(rule *dsl.Rule, m match.Match) tsutil.Node {
 	return m.Anchor
 }
 
-// runPreconditions evaluates each pre_condition through the predicate
-// registry. Optional checks pass when the predicate fails or when any
-// referenced capture is unbound. Unknown predicate ops fail closed
-// (unless marked optional).
 func runPreconditions(rule *dsl.Rule, env *match.Env, caps match.Captures) bool {
 	for _, pc := range rule.PreConditions {
 		if pc.Optional {
@@ -144,9 +250,6 @@ func runPreconditions(rule *dsl.Rule, env *match.Env, caps match.Captures) bool 
 	return true
 }
 
-// preconditionCapturesBound: every "@name" or "@a|@b" arg must resolve
-// to at least one bound capture for the precondition to be considered
-// "applicable" when marked optional.
 func preconditionCapturesBound(pc dsl.Precondition, caps match.Captures) bool {
 	for _, v := range pc.Args {
 		if !atRefHasBoundCapture(v, caps) {
@@ -158,7 +261,7 @@ func preconditionCapturesBound(pc dsl.Precondition, caps match.Captures) bool {
 
 func atRefHasBoundCapture(arg string, caps match.Captures) bool {
 	if len(arg) == 0 || arg[0] != '@' {
-		return true // not a capture ref; treat as bound
+		return true
 	}
 	for _, alt := range splitOr(arg) {
 		name := alt
@@ -185,9 +288,6 @@ func splitOr(s string) []string {
 	return out
 }
 
-// captureNamesFromAdjacent extracts the ordered list of capture names
-// declared as the immediate top-level capture of each adjacent element.
-// Used for delete_from fallback.
 func captureNamesFromAdjacent(adj []dsl.Child) []string {
 	out := make([]string, 0, len(adj)*2)
 	for _, c := range adj {

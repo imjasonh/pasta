@@ -61,12 +61,13 @@ func DefaultRegistry() PredicateRegistry {
 			"nil_comparison":   predNilComparison,
 			"last_non_blank":   predLastNonBlank,
 			"same_ident":       predSameIdent,
-			"empty":            predEmptyNamedChildren,
-			"named_child_count": predNamedChildCount,
+			"empty":               predEmptyNamedChildren,
+			"named_child_count":   predNamedChildCount,
+			"prev_sibling_matches": predPrevSiblingMatches,
+			"has_fact":         predHasFact,
+			"not_has_fact":     predNotHasFact,
 			// Stubs (not implemented; referenced in plan.md so schema
 			// validation succeeds).
-			"has_fact":         predStubFalse,
-			"not_has_fact":     predStubTrue,
 			"ancestor_is":      predStubFalse,
 			"type_is":          predStubFalse,
 			"field_absent":     predStubFalse,
@@ -244,6 +245,37 @@ func lastNonBlankIdentText(list tsutil.Node) string {
 func predStubTrue(args []string, env *Env, caps Captures) bool  { return true }
 func predStubFalse(args []string, env *Env, caps Captures) bool { return false }
 
+// predHasFact: [@cap, "kind"] — true if the captured node has a fact
+// of the given kind in the env's FactStore.
+func predHasFact(args []string, env *Env, caps Captures) bool {
+	if len(args) != 2 {
+		return false
+	}
+	if env.FactStore == nil {
+		return false
+	}
+	n, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return false
+	}
+	return env.FactStore.Has(n, args[1])
+}
+
+// predNotHasFact is the inverse of predHasFact.
+func predNotHasFact(args []string, env *Env, caps Captures) bool {
+	if len(args) != 2 {
+		return true
+	}
+	if env.FactStore == nil {
+		return true
+	}
+	n, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return true
+	}
+	return !env.FactStore.Has(n, args[1])
+}
+
 // predEmptyNamedChildren: [@cap] — true if @cap has zero named children.
 // Useful for matching empty blocks, empty argument lists, etc.
 func predEmptyNamedChildren(args []string, env *Env, caps Captures) bool {
@@ -255,6 +287,44 @@ func predEmptyNamedChildren(args []string, env *Env, caps Captures) bool {
 		return false
 	}
 	return len(n.NamedChildren()) == 0
+}
+
+// predPrevSiblingMatches: [@cap, "regex"] — true if the named child of
+// @cap's parent immediately preceding @cap exists AND its source text
+// matches the given regex.
+//
+// Unlike `adjacent` (which iterates the language's StmtList provider
+// and skips comments), this predicate walks ALL named children — so it
+// can find docstring-style comments or attribute markers that
+// immediately precede a declaration.
+func predPrevSiblingMatches(args []string, env *Env, caps Captures) bool {
+	if len(args) != 2 {
+		return false
+	}
+	n, ok := resolveCapture(args[0], caps)
+	if !ok {
+		return false
+	}
+	parent := n.Parent()
+	if !parent.IsValid() {
+		return false
+	}
+	siblings := parent.NamedChildren()
+	prev := tsutil.Node{}
+	for _, s := range siblings {
+		if s.StartByte() == n.StartByte() && s.EndByte() == n.EndByte() {
+			break
+		}
+		prev = s
+	}
+	if !prev.IsValid() {
+		return false
+	}
+	re, err := regexp.Compile(args[1])
+	if err != nil {
+		return false
+	}
+	return re.MatchString(prev.Text())
 }
 
 // predNamedChildCount: [@cap, "N"] — true if @cap has exactly N named

@@ -1,0 +1,26 @@
+package a
+
+func mayFail() error { return nil }
+
+func ok() {}
+
+func caller() {
+	// want:+1 `error return value of mayFail is discarded`
+	mayFail()
+	ok() // OK: no error return
+
+	if err := mayFail(); err != nil { // OK: handled
+		_ = err
+	}
+
+	err := mayFail() // OK: assigned
+	_ = err
+
+	_ = mayFail() // OK: explicitly assigned to blank
+}
+
+func plain(x int) int { return x } // not an error returner
+
+func usePlain() {
+	_ = plain(1)
+}

@@ -44,7 +44,8 @@ package schema
 		"all_match" |
 		"stmt_index_delta" |
 		"empty" |
-		"named_child_count"
+		"named_child_count" |
+		"prev_sibling_matches"
 	args: [...string]
 	optional?: bool | *false
 }
@@ -124,9 +125,9 @@ package schema
 	diagnose?: #Diagnostic
 	rewrite?:  #Rewrite
 	emit?: [...{
-		fact:    string
-		attach:  string
-		payload: _
+		fact:     string
+		attach:   string
+		payload?: _
 	}]
 }
 

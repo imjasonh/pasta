@@ -170,12 +170,18 @@ func TestDir(ctx context.Context, ruleDir string) (TestReport, error) {
 	return report, nil
 }
 
-// wantRe matches a `want` directive in a comment of any common style:
+// wantRe matches a `want` directive in a comment of any common style.
+// An optional `:+N`, `:-N`, or `:N` between `want` and the regex shifts
+// the expected diagnostic line — `// want:+1 "..."` says "the diag is
+// expected on the next line", which lets test data keep want markers
+// off the line being rewritten.
 //
-//	// want "regex"        // want `regex`
-//	# want "regex"         # want `regex`
-//	-- want `regex`         (SQL/Lua)
-var wantRe = regexp.MustCompile("(?://|#|--)\\s*want\\s+[`\"]([^`\"]+)[`\"]")
+//	// want "regex"          // want `regex`
+//	# want "regex"           # want `regex`
+//	-- want `regex`           (SQL/Lua)
+//	// want:+1 "regex"        — diagnostic expected on the next line
+//	// want:-1 "regex"        — diagnostic expected on the previous line
+var wantRe = regexp.MustCompile("(?://|#|--)\\s*want(?::([+\\-]?\\d+))?\\s+[`\"]([^`\"]+)[`\"]")
 
 // checkDiagnostics returns "" on success, or a multi-line failure
 // message describing missing/extra diagnostics.
@@ -235,10 +241,39 @@ func extractWantMarkers(src []byte) map[int][]string {
 	out := map[int][]string{}
 	for i, line := range strings.Split(string(src), "\n") {
 		for _, m := range wantRe.FindAllStringSubmatch(line, -1) {
-			out[i+1] = append(out[i+1], m[1])
+			// m[1] is the optional offset (e.g. "+1", "-2", "5"); m[2]
+			// is the regex.
+			line := i + 1
+			if m[1] != "" {
+				off, err := parseOffset(m[1])
+				if err == nil {
+					line += off
+				}
+			}
+			out[line] = append(out[line], m[2])
 		}
 	}
 	return out
+}
+
+// parseOffset parses "+1", "-2", "5" — the optional colon-separated
+// offset on a want marker.
+func parseOffset(s string) (int, error) {
+	sign := 1
+	if len(s) > 0 && s[0] == '+' {
+		s = s[1:]
+	} else if len(s) > 0 && s[0] == '-' {
+		sign = -1
+		s = s[1:]
+	}
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("bad offset")
+		}
+		n = n*10 + int(c-'0')
+	}
+	return sign * n, nil
 }
 
 func byLine(diags []effect.Diagnostic) map[int][]effect.Diagnostic {

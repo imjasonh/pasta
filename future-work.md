@@ -109,27 +109,16 @@ identifier to identifier". Extracting them shrinks rule files
 substantially and makes new rules easier to author. Highest ROI item
 in this list.
 
-### Load-time fact-dependency validation (cue.md §2.1)
+### Predicate-arg-shape validation
 **Effort:** S.
-Schema-side comprehensions that fail compilation when a rule's
-`requires:` includes a fact no rule `provides:`. cue.md sketches the
-exact CUE for this. Catches typos in fact names at load time rather
-than at runtime when no diagnostics fire.
-
-### Load-time capture validation (cue.md §3)
-**Effort:** M.
-Walk the rule's match pattern, collect capture names. Walk every
-`@name` reference in `replacement`, `text`, `message`, and predicate
-args; verify each resolves to a defined capture. Today typos pass
-through silently (the @-interpolation just emits the literal text).
-Would have caught bugs hit while writing analyzers.
-
-### Predicate-name validation (cue.md §2.2 adapted)
-**Effort:** S.
-The schema already enumerates valid `op` values for `#Predicate`, so
-unknown op names are a CUE error. We could extend the same idea to
-`pre_conditions[].check` and to predicate-arg shapes (e.g.
-`ancestor_is` requires args[1] to look like a node-type list).
+The schema enumerates `#Predicate.op` and (now) `#Precondition.check`
+as closed sets, and the loader walks captures to catch typos. The
+remaining gap is per-op arg shape — e.g. `ancestor_is` requires
+args[1] to be a list of strings; `matches` requires args[1] to be a
+valid Go regex; `nil_comparison` needs exactly three capture refs.
+The current validator's `predicateCaptureArgs` table half-encodes
+this; promoting it to a fuller per-op contract would catch more
+authoring mistakes at load time.
 
 ### Rule inheritance refactor (cue.md §2.3)
 **Effort:** S.

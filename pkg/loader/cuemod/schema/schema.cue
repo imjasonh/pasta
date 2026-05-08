@@ -104,7 +104,14 @@ package schema
 // ============================================================================
 
 #Precondition: {
-	check: string
+	// Closed set of check names registered by pasta's default
+	// PredicateRegistry. Adapters that add language-specific checks
+	// will need to extend this. Keep in sync with
+	// pkg/match/predicate.go DefaultRegistry().Checks.
+	check: "all_children_type" |
+		"siblings_after_no_ident" |
+		"ancestor_field_subtree_no_ident" |
+		"decl_matches_idents"
 	// Each arg is either a string (a capture ref like "@foo", a regex,
 	// or a literal) or a list of strings (e.g. `ancestor_types: [...]`).
 	args: {[string]: string | [...string]}
@@ -146,6 +153,28 @@ package schema
 	doc?:    string
 	facts: {[string]: #Fact}
 	rules: {[string]: #Rule}
+
+	// Compute every fact kind any rule provides. Used below to
+	// constrain `requires` to be a subset.
+	_provided_facts: [
+		for _, r in rules
+		for f in r.provides {
+			f
+		},
+	]
+
+	// Every rule's `requires` entry must be in `_provided_facts`. CUE's
+	// `or(_provided_facts)` builds a disjunction of the provided fact
+	// names; `[...or(_provided_facts)]` then constrains every list
+	// element to match one of them. Unsatisfied requires fail at load
+	// time with a CUE error pointing at the offending rule.
+	//
+	// If `_provided_facts` is empty, `or([])` is bottom and any
+	// non-empty `requires` is rejected — which is the right answer:
+	// nothing's provided, so nothing can be required.
+	rules: [string]: {
+		requires: [...or(_provided_facts)]
+	}
 }
 
 #Adapter: {

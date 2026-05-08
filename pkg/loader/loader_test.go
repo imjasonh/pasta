@@ -25,11 +25,14 @@ sample: schema.#Analyzer & {
 		match: {
 			node: "if_statement"
 			fields: condition: {
-				node: "binary_expression"
-				fields: {
-					left:     {capture: "expr"}
-					operator: {node: "=="}
-					right:    {node: "nil"}
+				capture: "cond"
+				pattern: {
+					node: "binary_expression"
+					fields: {
+						left:     {capture: "expr"}
+						operator: {node: "=="}
+						right:    {node: "nil"}
+					}
 				}
 			}
 		}
@@ -40,7 +43,7 @@ sample: schema.#Analyzer & {
 		}
 
 		rewrite: edits: [{
-			target:      "condition"
+			target:      "cond"
 			replacement: "!@expr"
 		}]
 	}
@@ -91,8 +94,8 @@ sample: schema.#Analyzer & {
 		t.Fatalf("rewrite missing or wrong shape")
 	}
 	e := r.Rewrite.Edits[0]
-	if e.Target != "condition" || e.Replacement != "!@expr" {
-		t.Errorf("edit = %+v, want target=condition replacement=!@expr", e)
+	if e.Target != "cond" || e.Replacement != "!@expr" {
+		t.Errorf("edit = %+v, want target=cond replacement=!@expr", e)
 	}
 }
 
@@ -125,6 +128,138 @@ sample: schema.#Analyzer & {
 	if !equal(r.Match.Node, want) {
 		t.Errorf("Match.Node = %v, want %v", r.Match.Node, want)
 	}
+}
+
+// TestLoadUnsatisfiedRequires verifies that the schema's fact-dep
+// validation rejects an analyzer whose `requires` references a fact
+// no rule provides — the canonical typo-catch case.
+func TestLoadUnsatisfiedRequires(t *testing.T) {
+	src := `package bad
+
+import "github.com/imjasonh/pasta/schema"
+
+bad: schema.#Analyzer & {
+	name:    "bad"
+	version: "0.1.0"
+	facts: {
+		good_fact: {kind: "good_fact"}
+	}
+	rules: {
+		producer: {
+			name: "producer"
+			doc:  "provides good_fact"
+			languages: ["go"]
+			requires: []
+			provides: ["good_fact"]
+			match: {node: "identifier"}
+			emit: [{fact: "good_fact", attach: "_root"}]
+		}
+		consumer: {
+			name: "consumer"
+			doc:  "requires a fact nobody provides"
+			languages: ["go"]
+			requires: ["good_fact", "mistyped_fact"]   // typo
+			provides: []
+			match: {node: "identifier"}
+			diagnose: {message: "x", severity: "hint"}
+		}
+	}
+}
+`
+	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
+	_, err := LoadFS(fsys, "bad.cue")
+	if err == nil {
+		t.Fatal("expected error from unsatisfied requires; got nil")
+	}
+	// CUE's error should reference the offending value.
+	if !contains(err.Error(), "mistyped_fact") {
+		t.Errorf("error doesn't mention the offending fact: %v", err)
+	}
+}
+
+// TestLoadUnknownPreconditionCheck verifies the schema rejects a
+// `pre_conditions[].check` that isn't one of the registered names.
+func TestLoadUnknownPreconditionCheck(t *testing.T) {
+	src := `package bad
+
+import "github.com/imjasonh/pasta/schema"
+
+bad: schema.#Analyzer & {
+	name:    "bad"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc:  "uses an unknown precondition"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {node: "identifier"}
+		pre_conditions: [{
+			check: "no_such_check"
+			args: {a: "@x"}
+		}]
+		diagnose: {message: "x", severity: "hint"}
+	}
+}
+`
+	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
+	_, err := LoadFS(fsys, "bad.cue")
+	if err == nil {
+		t.Fatal("expected error from unknown precondition check; got nil")
+	}
+	if !contains(err.Error(), "no_such_check") {
+		t.Errorf("error doesn't mention the offending check name: %v", err)
+	}
+}
+
+// TestLoadUnknownCaptureRef verifies the validator catches a typo
+// where a rewrite references a capture name not bound by the match
+// pattern.
+func TestLoadUnknownCaptureRef(t *testing.T) {
+	src := `package bad
+
+import "github.com/imjasonh/pasta/schema"
+
+bad: schema.#Analyzer & {
+	name:    "bad"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc:  "typo'd capture in replacement"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {
+			node: "if_statement"
+			fields: condition: {capture: "cond"}
+		}
+		rewrite: edits: [{
+			target:      "cond"
+			replacement: "!@expression"   // typo: pattern binds 'cond', not 'expression'
+		}]
+		diagnose: {message: "x", severity: "hint"}
+	}
+}
+`
+	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
+	_, err := LoadFS(fsys, "bad.cue")
+	if err == nil {
+		t.Fatal("expected error from unknown capture; got nil")
+	}
+	if !contains(err.Error(), "expression") {
+		t.Errorf("error doesn't mention the offending capture: %v", err)
+	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 func equal(a, b []string) bool {

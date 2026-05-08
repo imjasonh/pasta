@@ -19,6 +19,7 @@ import (
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
+	"cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/load"
 
 	"github.com/imjasonh/pasta/pkg/dsl"
@@ -84,15 +85,15 @@ func LoadDir(dir string) (LoadResult, error) {
 	var out LoadResult
 	for _, inst := range insts {
 		if inst.Err != nil {
-			return LoadResult{}, fmt.Errorf("load %s: %w", inst.Dir, inst.Err)
+			return LoadResult{}, fmt.Errorf("load %s: %s", inst.Dir, cueErrDetails(inst.Err))
 		}
 		ctx := cuecontext.New()
 		v := ctx.BuildInstance(inst)
 		if err := v.Err(); err != nil {
-			return LoadResult{}, fmt.Errorf("build %s: %w", inst.Dir, err)
+			return LoadResult{}, fmt.Errorf("build %s: %s", inst.Dir, cueErrDetails(err))
 		}
 		if err := v.Validate(cue.Concrete(true)); err != nil {
-			return LoadResult{}, fmt.Errorf("validate %s: %w", inst.Dir, err)
+			return LoadResult{}, fmt.Errorf("validate %s: %s", inst.Dir, cueErrDetails(err))
 		}
 		extracted, err := extractTopLevel(v)
 		if err != nil {
@@ -102,6 +103,18 @@ func LoadDir(dir string) (LoadResult, error) {
 		out.Languages = append(out.Languages, extracted.Languages...)
 	}
 	return out, nil
+}
+
+// cueErrDetails formats a CUE error with full per-position detail.
+// CUE's default Error() summarizes disjunction failures as "N errors in
+// empty disjunction" which hides the offending value. Details() expands
+// every leaf so users see e.g. `check: "no_such_check": ...`.
+func cueErrDetails(err error) string {
+	cerr, ok := err.(errors.Error)
+	if !ok {
+		return err.Error()
+	}
+	return errors.Details(cerr, nil)
 }
 
 func loadPath(path string) (LoadResult, error) {
@@ -123,15 +136,15 @@ func loadPath(path string) (LoadResult, error) {
 		return LoadResult{}, fmt.Errorf("no CUE instances loaded from %s", abs)
 	}
 	if err := insts[0].Err; err != nil {
-		return LoadResult{}, fmt.Errorf("load %s: %w", abs, err)
+		return LoadResult{}, fmt.Errorf("load %s: %s", abs, cueErrDetails(err))
 	}
 	ctx := cuecontext.New()
 	v := ctx.BuildInstance(insts[0])
 	if err := v.Err(); err != nil {
-		return LoadResult{}, fmt.Errorf("build %s: %w", abs, err)
+		return LoadResult{}, fmt.Errorf("build %s: %s", abs, cueErrDetails(err))
 	}
 	if err := v.Validate(cue.Concrete(true)); err != nil {
-		return LoadResult{}, fmt.Errorf("validate %s: %w", abs, err)
+		return LoadResult{}, fmt.Errorf("validate %s: %s", abs, cueErrDetails(err))
 	}
 	return extractTopLevel(v)
 }
@@ -223,6 +236,9 @@ func extractTopLevel(v cue.Value) (LoadResult, error) {
 		val := iter.Value()
 
 		if a, ok := tryDecodeAnalyzer(val); ok {
+			if err := validateCaptures(a); err != nil {
+				return LoadResult{}, fmt.Errorf("analyzer %q: %w", a.Name, err)
+			}
 			out.Analyzers = append(out.Analyzers, a)
 			continue
 		}

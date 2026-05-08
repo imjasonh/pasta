@@ -8,7 +8,7 @@ import (
 func TestLoadRoundTrip(t *testing.T) {
 	src := `package sample
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 sample: schema.#Analyzer & {
 	name:    "sample"
@@ -99,7 +99,7 @@ sample: schema.#Analyzer & {
 func TestLoadNodeUnion(t *testing.T) {
 	src := `package sample
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 sample: schema.#Analyzer & {
 	name: "sample"

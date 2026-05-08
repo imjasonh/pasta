@@ -2,12 +2,12 @@
 //
 // Import as:
 //
-//	import golang "pasta.dev/lang/go"
+//	import golang "github.com/imjasonh/pasta/lang/go"
 //
 // then reference `golang.Config` in rules' languages list.
 package go
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 // Config is the language registration for Go.
 Config: schema.#Language & {

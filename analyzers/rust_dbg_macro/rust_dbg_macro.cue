@@ -7,8 +7,8 @@
 package rust_dbg_macro
 
 import (
-	"pasta.dev/schema"
-	rustlang "pasta.dev/lang/rust"
+	"github.com/imjasonh/pasta/schema"
+	rustlang "github.com/imjasonh/pasta/lang/rust"
 )
 
 rust_dbg_macro: schema.#Analyzer & {

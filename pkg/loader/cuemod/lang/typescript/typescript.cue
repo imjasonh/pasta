@@ -1,7 +1,7 @@
 // Package typescript declares the built-in TypeScript language config.
 package typescript
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "typescript"

@@ -8,8 +8,8 @@
 package js_object_assign_spread
 
 import (
-	"pasta.dev/schema"
-	jslang "pasta.dev/lang/javascript"
+	"github.com/imjasonh/pasta/schema"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
 )
 
 js_object_assign_spread: schema.#Analyzer & {

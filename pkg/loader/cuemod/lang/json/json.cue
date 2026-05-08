@@ -1,7 +1,7 @@
 // Package json declares the built-in JSON language config.
 package json
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "json"

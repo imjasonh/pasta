@@ -12,8 +12,8 @@
 package rust_needless_bool
 
 import (
-	"pasta.dev/schema"
-	"pasta.dev/lang/rust"
+	"github.com/imjasonh/pasta/schema"
+	"github.com/imjasonh/pasta/lang/rust"
 )
 
 rust_needless_bool: schema.#Analyzer & {

@@ -6,8 +6,8 @@
 package python_isinstance_singleton
 
 import (
-	"pasta.dev/schema"
-	pylang "pasta.dev/lang/python"
+	"github.com/imjasonh/pasta/schema"
+	pylang "github.com/imjasonh/pasta/lang/python"
 )
 
 python_isinstance_singleton: schema.#Analyzer & {

@@ -5,8 +5,8 @@
 package js_empty_promise
 
 import (
-	"pasta.dev/schema"
-	jslang "pasta.dev/lang/javascript"
+	"github.com/imjasonh/pasta/schema"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
 )
 
 js_empty_promise: schema.#Analyzer & {

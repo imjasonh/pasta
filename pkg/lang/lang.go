@@ -1,7 +1,7 @@
 // Package lang exposes the registered set of tree-sitter languages.
 //
 // Language metadata (name, file extensions, comment node types) is
-// declared in CUE under pasta.dev/lang/<name> and loaded at startup
+// declared in CUE under github.com/imjasonh/pasta/lang/<name> and loaded at startup
 // from the embedded built-in module shipped by pkg/loader. The only
 // non-CUE component is pkg/lang/grammars.go, a small map from grammar
 // name to its gotreesitter GetLanguage function — required because
@@ -35,7 +35,7 @@ type Language struct {
 	GetLanguage  func() *gts.Language
 }
 
-// All is the live registry, populated from the embedded pasta.dev module.
+// All is the live registry, populated from the embedded github.com/imjasonh/pasta module.
 var All map[string]Language
 
 func init() {
@@ -46,7 +46,7 @@ func init() {
 	All = m
 }
 
-// loadEmbedded walks the embedded pasta.dev/lang/* tree, compiling each
+// loadEmbedded walks the embedded github.com/imjasonh/pasta/lang/* tree, compiling each
 // language CUE file with its schema dependency. Each file exports a
 // `Config` value of shape #Language; we decode that into Language.
 func loadEmbedded() (map[string]Language, error) {
@@ -72,7 +72,7 @@ func loadEmbedded() (map[string]Language, error) {
 		}
 
 		// Compile schema + lang file together. Strip imports and the
-		// `pasta.dev/schema.` prefix from references so this works as
+		// `github.com/imjasonh/pasta/schema.` prefix from references so this works as
 		// one anonymous compilation unit. (We use the heavier
 		// load.Instances pipeline only for user CUE; for our own
 		// already-trusted built-ins, this is simpler and faster.)

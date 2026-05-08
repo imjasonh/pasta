@@ -1,11 +1,11 @@
 // Package python is a library of reusable CUE fragments for
 // authoring Python analyzers. Importable as:
 //
-//	import pypat "pasta.dev/patterns/python"
+//	import pypat "github.com/imjasonh/pasta/patterns/python"
 
 package python
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 // =====================================================================
 // Function-like nodes

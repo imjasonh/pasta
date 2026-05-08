@@ -1,7 +1,7 @@
 // notgo demonstrates two CUE-module capabilities:
 //
 //  1. A user can declare a NEW language entirely in CUE — without a
-//     pasta release — by importing pasta.dev/schema and emitting a
+//     pasta release — by importing github.com/imjasonh/pasta/schema and emitting a
 //     #Language value. The language's `grammar` field references a
 //     grammar registered in the pasta binary.
 //
@@ -18,8 +18,8 @@
 package notgo_alias
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/go"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/go"
 )
 
 notgo: schema.#Language & {

@@ -6,9 +6,9 @@
 package go_errors_is_nil
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/go"
-	gopat "pasta.dev/patterns/go"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/go"
+	gopat "github.com/imjasonh/pasta/patterns/go"
 )
 
 go_errors_is_nil: schema.#Analyzer & {

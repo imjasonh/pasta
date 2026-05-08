@@ -10,8 +10,8 @@
 package bash_eval_use
 
 import (
-	"pasta.dev/schema"
-	bashlang "pasta.dev/lang/bash"
+	"github.com/imjasonh/pasta/schema"
+	bashlang "github.com/imjasonh/pasta/lang/bash"
 )
 
 bash_eval_use: schema.#Analyzer & {

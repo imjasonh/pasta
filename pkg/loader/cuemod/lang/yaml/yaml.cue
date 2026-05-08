@@ -1,7 +1,7 @@
 // Package yaml declares the built-in YAML language config.
 package yaml
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "yaml"

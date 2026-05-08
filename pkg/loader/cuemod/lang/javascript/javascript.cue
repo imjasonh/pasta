@@ -1,7 +1,7 @@
 // Package javascript declares the built-in JavaScript language config.
 package javascript
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "javascript"

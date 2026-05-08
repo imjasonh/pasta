@@ -13,8 +13,8 @@
 package python_eq_none
 
 import (
-	"pasta.dev/schema"
-	"pasta.dev/lang/python"
+	"github.com/imjasonh/pasta/schema"
+	"github.com/imjasonh/pasta/lang/python"
 )
 
 python_eq_none: schema.#Analyzer & {

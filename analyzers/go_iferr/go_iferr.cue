@@ -26,9 +26,9 @@
 package go_iferr
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/go"
-	gopat "pasta.dev/patterns/go"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/go"
+	gopat "github.com/imjasonh/pasta/patterns/go"
 )
 
 go_iferr: schema.#Analyzer & {

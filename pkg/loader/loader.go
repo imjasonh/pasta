@@ -1,10 +1,10 @@
 // Package loader loads CUE rule files, validates them against the pasta
 // schema, and decodes the result into [dsl.Analyzer] structs.
 //
-// Rules can `import "pasta.dev/schema"` and `import "pasta.dev/lang/<name>"`.
-// The pasta.dev module ships embedded in the binary; the loader exposes
+// Rules can `import "github.com/imjasonh/pasta/schema"` and `import "github.com/imjasonh/pasta/lang/<name>"`.
+// The github.com/imjasonh/pasta module ships embedded in the binary; the loader exposes
 // it to the CUE compiler by overlaying it under the user's
-// cue.mod/pkg/pasta.dev/ at load time. Users don't need a cue.mod of
+// cue.mod/pkg/github.com/imjasonh/pasta/ at load time. Users don't need a cue.mod of
 // their own — one is synthesized if absent.
 package loader
 
@@ -160,8 +160,8 @@ func LoadFS(fsys fs.FS, paths ...string) (*dsl.Analyzer, error) {
 }
 
 // buildOverlay synthesizes any missing cue.mod for the user directory
-// and vendors the embedded pasta.dev module under
-// <userDir>/cue.mod/pkg/pasta.dev/.
+// and vendors the embedded github.com/imjasonh/pasta module under
+// <userDir>/cue.mod/pkg/github.com/imjasonh/pasta/.
 func buildOverlay(userDir, userFile string) (map[string]load.Source, error) {
 	overlay := map[string]load.Source{}
 
@@ -177,8 +177,8 @@ language: version: "v0.13.0"
 		return nil, fmt.Errorf("stat %s: %w", userMod, err)
 	}
 
-	// Vendor pasta.dev: walk embedded cuemod/ and place each file at
-	// the user's cue.mod/pkg/pasta.dev/<rel>.
+	// Vendor github.com/imjasonh/pasta: walk embedded cuemod/ and place each file at
+	// the user's cue.mod/pkg/github.com/imjasonh/pasta/<rel>.
 	root := "cuemod"
 	err := fs.WalkDir(embeddedFS, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -192,7 +192,7 @@ language: version: "v0.13.0"
 			return err
 		}
 		rel := strings.TrimPrefix(p, root+"/")
-		target := filepath.Join(userDir, "cue.mod", "pkg", "pasta.dev", rel)
+		target := filepath.Join(userDir, "cue.mod", "pkg", "github.com/imjasonh/pasta", rel)
 		overlay[target] = load.FromBytes(b)
 		return nil
 	})
@@ -271,6 +271,6 @@ func tryDecodeLanguage(v cue.Value) (dsl.LanguageDecl, bool) {
 	return l, true
 }
 
-// EmbeddedFS exposes the embedded pasta.dev module so other packages
+// EmbeddedFS exposes the embedded github.com/imjasonh/pasta module so other packages
 // (e.g. pkg/lang) can load language configs from the same source.
 func EmbeddedFS() embed.FS { return embeddedFS }

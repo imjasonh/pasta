@@ -7,8 +7,8 @@
 package js_template_no_subst
 
 import (
-	"pasta.dev/schema"
-	jslang "pasta.dev/lang/javascript"
+	"github.com/imjasonh/pasta/schema"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
 )
 
 js_template_no_subst: schema.#Analyzer & {

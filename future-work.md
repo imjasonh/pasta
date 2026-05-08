@@ -125,11 +125,11 @@ comment — needs negative matching (which we do have via
 
 ### Pattern libraries (cue.md §1.2)
 **Effort:** L (worth it). **Source:** cue.md §1.2.
-Build out `pasta.dev/patterns/<lang>/` — importable CUE definitions
+Build out `github.com/imjasonh/pasta/patterns/<lang>/` — importable CUE definitions
 for common shapes:
 
 ```cue
-// pasta.dev/patterns/go
+// github.com/imjasonh/pasta/patterns/go
 #NilComparison: schema.#Pattern & {...}
 #ShortVarDecl:  schema.#Pattern & {...}
 #ErrorReturningFunc: schema.#Pattern & {...}

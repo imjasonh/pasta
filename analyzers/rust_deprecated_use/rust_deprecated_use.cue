@@ -12,8 +12,8 @@
 package rust_deprecated_use
 
 import (
-	"pasta.dev/schema"
-	rustlang "pasta.dev/lang/rust"
+	"github.com/imjasonh/pasta/schema"
+	rustlang "github.com/imjasonh/pasta/lang/rust"
 )
 
 rust_deprecated_use: schema.#Analyzer & {

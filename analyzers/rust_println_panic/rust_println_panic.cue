@@ -7,8 +7,8 @@
 package rust_println_panic
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/rust"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/rust"
 )
 
 rust_println_panic: schema.#Analyzer & {

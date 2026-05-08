@@ -7,7 +7,7 @@ language. The choice gives us four things YAML or JSON Schema don't:
    names are caught before the runtime runs.
 
 2. **A real module system with versioned imports.** Built-in language
-   configs and user-defined extensions live in the same `pasta.dev`
+   configs and user-defined extensions live in the same `github.com/imjasonh/pasta`
    namespace. Anyone can publish a CUE module that adds a new language
    alias or a custom rule pack and import it from their own analyzer
    directory; pasta loads it via the same `cue/load` machinery.
@@ -38,7 +38,7 @@ analysis too.
 
 ## What we currently use
 
-- **Modules:** `pasta.dev/schema` (DSL types), `pasta.dev/lang/<name>`
+- **Modules:** `github.com/imjasonh/pasta/schema` (DSL types), `github.com/imjasonh/pasta/lang/<name>`
   (language configs). Users can supply their own modules; see
   `testdata/notgo_alias/` for an example.
 - **Type-safe rule loading:** every shipped rule is unified with
@@ -51,7 +51,7 @@ analysis too.
 ## What CUE could do that we don't yet exploit
 
 Several CUE-specific wins remain unrealized — pattern libraries
-(`pasta.dev/patterns/<lang>` with reusable fragments like
+(`github.com/imjasonh/pasta/patterns/<lang>` with reusable fragments like
 `#NilComparison`), load-time fact dependency validation, capture
 validation, conditional-field language polymorphism, and a
 lattice-style fact model. Each is tracked in

@@ -9,8 +9,8 @@
 package go_negcmp
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/go"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/go"
 )
 
 go_negcmp: schema.#Analyzer & {

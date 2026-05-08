@@ -14,9 +14,9 @@
 package python_method_no_self
 
 import (
-	"pasta.dev/schema"
-	pylang "pasta.dev/lang/python"
-	pypat "pasta.dev/patterns/python"
+	"github.com/imjasonh/pasta/schema"
+	pylang "github.com/imjasonh/pasta/lang/python"
+	pypat "github.com/imjasonh/pasta/patterns/python"
 )
 
 python_method_no_self: schema.#Analyzer & {

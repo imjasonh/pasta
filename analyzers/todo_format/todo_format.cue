@@ -8,7 +8,7 @@
 
 package todo_format
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 todo_format: schema.#Analyzer & {
 	name:    "todo_format"

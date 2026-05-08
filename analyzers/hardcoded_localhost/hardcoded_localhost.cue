@@ -4,7 +4,7 @@
 
 package hardcoded_localhost
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 hardcoded_localhost: schema.#Analyzer & {
 	name:    "hardcoded_localhost"

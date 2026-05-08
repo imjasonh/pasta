@@ -8,8 +8,8 @@
 package yaml_truthy
 
 import (
-	"pasta.dev/schema"
-	yamllang "pasta.dev/lang/yaml"
+	"github.com/imjasonh/pasta/schema"
+	yamllang "github.com/imjasonh/pasta/lang/yaml"
 )
 
 yaml_truthy: schema.#Analyzer & {

@@ -9,8 +9,8 @@
 package python_assert_tuple
 
 import (
-	"pasta.dev/schema"
-	pylang "pasta.dev/lang/python"
+	"github.com/imjasonh/pasta/schema"
+	pylang "github.com/imjasonh/pasta/lang/python"
 )
 
 python_assert_tuple: schema.#Analyzer & {

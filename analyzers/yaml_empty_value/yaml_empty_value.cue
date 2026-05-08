@@ -10,8 +10,8 @@
 package yaml_empty_value
 
 import (
-	"pasta.dev/schema"
-	yamllang "pasta.dev/lang/yaml"
+	"github.com/imjasonh/pasta/schema"
+	yamllang "github.com/imjasonh/pasta/lang/yaml"
 )
 
 yaml_empty_value: schema.#Analyzer & {

@@ -1,7 +1,7 @@
 // Package rust declares the built-in Rust language config for pasta.
 package rust
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "rust"

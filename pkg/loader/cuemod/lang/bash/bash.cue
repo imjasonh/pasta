@@ -1,7 +1,7 @@
 // Package bash declares the built-in Bash language config.
 package bash
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "bash"

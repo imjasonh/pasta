@@ -8,7 +8,7 @@
 
 package hardcoded_credentials
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 hardcoded_credentials: schema.#Analyzer & {
 	name:    "hardcoded_credentials"

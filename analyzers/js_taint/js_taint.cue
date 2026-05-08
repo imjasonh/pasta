@@ -7,8 +7,8 @@
 package js_taint
 
 import (
-	"pasta.dev/schema"
-	jslang "pasta.dev/lang/javascript"
+	"github.com/imjasonh/pasta/schema"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
 )
 
 js_taint: schema.#Analyzer & {

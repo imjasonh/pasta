@@ -6,8 +6,8 @@
 package python_bare_except
 
 import (
-	"pasta.dev/schema"
-	pylang "pasta.dev/lang/python"
+	"github.com/imjasonh/pasta/schema"
+	pylang "github.com/imjasonh/pasta/lang/python"
 )
 
 python_bare_except: schema.#Analyzer & {

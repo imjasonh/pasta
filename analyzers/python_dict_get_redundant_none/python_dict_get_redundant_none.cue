@@ -5,8 +5,8 @@
 package python_dict_get_redundant_none
 
 import (
-	"pasta.dev/schema"
-	pylang "pasta.dev/lang/python"
+	"github.com/imjasonh/pasta/schema"
+	pylang "github.com/imjasonh/pasta/lang/python"
 )
 
 python_dict_get_redundant_none: schema.#Analyzer & {

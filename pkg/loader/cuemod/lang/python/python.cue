@@ -1,7 +1,7 @@
 // Package python declares the built-in Python language config for pasta.
 package python
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 Config: schema.#Language & {
 	grammar:    "python"

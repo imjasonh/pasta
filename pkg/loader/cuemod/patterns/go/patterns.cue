@@ -2,7 +2,7 @@
 // authoring Go analyzers — node-type constants, common pattern
 // shapes, and predicate-arg helpers. Importable as:
 //
-//	import gopat "pasta.dev/patterns/go"
+//	import gopat "github.com/imjasonh/pasta/patterns/go"
 //
 // Adding a fragment here removes hand-rolled grammar knowledge from
 // individual rules, so the next time tree-sitter-go renames a node
@@ -10,7 +10,7 @@
 
 package go
 
-import "pasta.dev/schema"
+import "github.com/imjasonh/pasta/schema"
 
 // =====================================================================
 // Container conventions

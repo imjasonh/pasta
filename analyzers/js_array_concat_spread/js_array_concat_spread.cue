@@ -7,8 +7,8 @@
 package js_array_concat_spread
 
 import (
-	"pasta.dev/schema"
-	jslang "pasta.dev/lang/javascript"
+	"github.com/imjasonh/pasta/schema"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
 )
 
 js_array_concat_spread: schema.#Analyzer & {

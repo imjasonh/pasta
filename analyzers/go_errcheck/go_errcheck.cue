@@ -25,8 +25,8 @@
 package go_errcheck
 
 import (
-	"pasta.dev/schema"
-	golang "pasta.dev/lang/go"
+	"github.com/imjasonh/pasta/schema"
+	golang "github.com/imjasonh/pasta/lang/go"
 )
 
 go_errcheck: schema.#Analyzer & {

@@ -7,8 +7,8 @@
 package ts_array_type_style
 
 import (
-	"pasta.dev/schema"
-	tslang "pasta.dev/lang/typescript"
+	"github.com/imjasonh/pasta/schema"
+	tslang "github.com/imjasonh/pasta/lang/typescript"
 )
 
 ts_array_type_style: schema.#Analyzer & {

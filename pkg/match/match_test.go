@@ -235,6 +235,65 @@ func foo() error { return nil }
 	}
 }
 
+// TestAdjacentOptionalQuantifier verifies that an adjacent element
+// with quantifier: "?" can match either 0 or 1 statements via the
+// matcher's backtracking implementation.
+func TestAdjacentOptionalQuantifier(t *testing.T) {
+	pat := &dsl.Pattern{
+		Node: []string{"statement_list"},
+		Adjacent: []dsl.Child{
+			{
+				Capture:    "decl",
+				Quantifier: "?",
+				Pattern:    &dsl.Pattern{Node: []string{"var_declaration"}},
+			},
+			{
+				Capture: "assign",
+				Pattern: &dsl.Pattern{Node: []string{"assignment_statement"}},
+			},
+		},
+	}
+
+	// Case 1: var_decl is present.
+	root := parseGo(t, `package p
+func f() {
+	var err error
+	err = foo()
+}
+func foo() error { return nil }
+`)
+	matches := FindAll(pat, root, goEnv())
+	if len(matches) != 1 {
+		t.Fatalf("with-decl: len(matches) = %d, want 1", len(matches))
+	}
+	if got := matches[0].Captures["decl"].Type(); got != "var_declaration" {
+		t.Errorf("with-decl: decl capture type = %q, want var_declaration", got)
+	}
+
+	// Case 2: var_decl is missing — should still match because of `?`.
+	root = parseGo(t, `package p
+import "errors"
+var sentinel = errors.New("x")
+func f() {
+	err = foo()
+	_ = err
+}
+var err error
+func foo() error { return nil }
+`)
+	matches = FindAll(pat, root, goEnv())
+	if len(matches) != 1 {
+		t.Fatalf("without-decl: len(matches) = %d, want 1", len(matches))
+	}
+	if matches[0].Captures["decl"].IsValid() {
+		t.Errorf("without-decl: decl capture should be unbound, got %s",
+			matches[0].Captures["decl"].Type())
+	}
+	if got := matches[0].Captures["assign"].Type(); got != "assignment_statement" {
+		t.Errorf("without-decl: assign capture type = %q, want assignment_statement", got)
+	}
+}
+
 func TestNonConsecutive(t *testing.T) {
 	root := parseGo(t, `package p
 import "fmt"

@@ -178,7 +178,7 @@ match: {
 
 This replaces what would otherwise require three duplicate rules.
 
-**Future extension — quantifiers within `adjacent`:** Each adjacent element is currently required and matches exactly one node. A future extension will honor `quantifier` (`?`, `*`, `+`) on adjacent elements, turning the sliding window into a small backtracking matcher. Useful for patterns like "any number of leading `defer` statements", "an optional cleanup call before the assign", or "three or more consecutive slice appends". Plan.md already declares `quantifier` on `#Capture` for this purpose; only `preceding` honors it today. To be added when a second analyzer needs it.
+**Quantifiers within `adjacent`:** Adjacent elements may carry `quantifier: "?"` to consume 0 or 1 statements (greedy). The matcher is a small backtracking implementation that tries the with-element branch first and falls back to without-element. Required (no quantifier) elements consume exactly one statement. `*` and `+` (zero-or-more, one-or-more) follow the same shape but aren't yet implemented. `preceding` is honored only on required adjacent elements — combining it with a quantifier is currently rejected.
 
 ### 3.3 Diagnostics and Rewrites
 

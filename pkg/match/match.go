@@ -136,50 +136,36 @@ func matchChild(c *dsl.Child, n tsutil.Node, env *Env, caps Captures) bool {
 	return matchPattern(inner, n, env, caps)
 }
 
-// matchAdjacent slides a window of size len(adj) across the container's
-// statement list, attempting to match all elements at each window
-// position. The first successful window wins. If an adjacent element has
-// a `preceding` clause, the prior sibling (window_start-1) is matched
-// against it.
+// matchAdjacent slides starting positions across the container's
+// statement list and tries to match the adj sequence with backtracking
+// support for `quantifier: "?"` (optional) elements. Required (no
+// quantifier) elements consume exactly one statement; optional
+// elements consume 0 or 1.
+//
+// `*` and `+` are not yet supported; they would fit the same
+// backtracking shape but require additional bookkeeping for
+// minimum/maximum match counts.
+//
+// `preceding` is honored on REQUIRED adjacent elements only — if an
+// element with a quantifier had a preceding clause, the meaning would
+// be ambiguous. Mixing them errors out at match time.
 func matchAdjacent(adj []dsl.Child, container tsutil.Node, env *Env, caps Captures) bool {
 	stmts := env.StmtList(container)
-	winSize := len(adj)
-	if winSize == 0 {
+	if len(adj) == 0 {
 		return true
 	}
-	if len(stmts) < winSize {
+	minSize := 0
+	for _, c := range adj {
+		if c.Quantifier != "?" {
+			minSize++
+		}
+	}
+	if len(stmts) < minSize {
 		return false
 	}
-	for start := 0; start+winSize <= len(stmts); start++ {
+	for start := 0; start <= len(stmts)-minSize; start++ {
 		try := caps.Clone()
-		ok := true
-		for i := 0; i < winSize; i++ {
-			el := adj[i]
-			if !matchChild(&el, stmts[start+i], env, try) {
-				ok = false
-				break
-			}
-			if el.Preceding != nil {
-				// Look one statement back from the window's first element.
-				prevIdx := start + i - 1
-				if prevIdx < 0 {
-					if !precedingOptional(el.Preceding) {
-						ok = false
-						break
-					}
-					continue
-				}
-				prev := stmts[prevIdx]
-				if !matchChild(el.Preceding, prev, env, try) {
-					if !precedingOptional(el.Preceding) {
-						ok = false
-						break
-					}
-				}
-			}
-		}
-		if ok {
-			// Commit the speculative captures.
+		if matchAdjSeq(adj, stmts, start, env, try) {
 			for k, v := range try {
 				caps[k] = v
 			}
@@ -187,6 +173,65 @@ func matchAdjacent(adj []dsl.Child, container tsutil.Node, env *Env, caps Captur
 		}
 	}
 	return false
+}
+
+// matchAdjSeq tries to match adj starting at stmts[startIdx]. Returns
+// true if the entire sequence matches; binds captures into caps on
+// success. Optional elements (quantifier: "?") branch: try with-element
+// first (greedy), fall back to without-element.
+func matchAdjSeq(adj []dsl.Child, stmts []tsutil.Node, startIdx int, env *Env, caps Captures) bool {
+	if len(adj) == 0 {
+		return true
+	}
+	el := adj[0]
+
+	if el.Quantifier == "?" {
+		// Try greedy: match el at startIdx, then rest at startIdx+1.
+		if startIdx < len(stmts) {
+			try := caps.Clone()
+			if matchChild(&el, stmts[startIdx], env, try) {
+				if matchAdjSeq(adj[1:], stmts, startIdx+1, env, try) {
+					for k, v := range try {
+						caps[k] = v
+					}
+					return true
+				}
+			}
+		}
+		// Fall back: skip el, match rest at startIdx.
+		return matchAdjSeq(adj[1:], stmts, startIdx, env, caps)
+	}
+
+	// Required: must consume exactly one statement.
+	if startIdx >= len(stmts) {
+		return false
+	}
+	try := caps.Clone()
+	if !matchChild(&el, stmts[startIdx], env, try) {
+		return false
+	}
+	if el.Preceding != nil {
+		prevIdx := startIdx - 1
+		if prevIdx < 0 {
+			if !precedingOptional(el.Preceding) {
+				return false
+			}
+		} else {
+			prev := stmts[prevIdx]
+			if !matchChild(el.Preceding, prev, env, try) {
+				if !precedingOptional(el.Preceding) {
+					return false
+				}
+			}
+		}
+	}
+	if !matchAdjSeq(adj[1:], stmts, startIdx+1, env, try) {
+		return false
+	}
+	for k, v := range try {
+		caps[k] = v
+	}
+	return true
 }
 
 func precedingOptional(c *dsl.Child) bool {

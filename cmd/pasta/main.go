@@ -6,7 +6,7 @@
 //	pasta test <rule-dir> [<rule-dir>...] run rules on their testdata/
 //
 // The source file's extension determines the tree-sitter language; see
-// pkg/lang for the registered set.
+// internal/lang for the registered set.
 package main
 
 import (
@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/imjasonh/pasta/pkg/dsl"
-	"github.com/imjasonh/pasta/pkg/runner"
+	"github.com/imjasonh/pasta/internal/dsl"
+	"github.com/imjasonh/pasta/internal/runner"
 )
 
 func main() {

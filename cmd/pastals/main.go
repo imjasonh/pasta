@@ -3,7 +3,7 @@
 // and it will publish pasta diagnostics for files matching one of the
 // registered languages.
 //
-// All the logic lives in pkg/pastals; this binary is just an entry
+// All the logic lives in internal/pastals; this binary is just an entry
 // point that wires the server up to stdin/stdout.
 package main
 
@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/imjasonh/pasta/pkg/pastals"
+	"github.com/imjasonh/pasta/internal/pastals"
 )
 
 func main() {

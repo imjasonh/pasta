@@ -8,7 +8,7 @@ converter, and a configuration story for finding rule files.
 
 ## Architecture
 
-New binary `cmd/pastals/`. Stdio JSON-RPC. Links `pkg/runner`
+New binary `cmd/pastals/`. Stdio JSON-RPC. Links `internal/runner`
 directly — no subprocess invocation, no CLI-output scraping.
 
 LSP types and JSON-RPC framing are hand-rolled (one ~100-line
@@ -24,7 +24,7 @@ cmd/pastals/
   protocol.go        LSP types we use (Position, Range, Diagnostic, ...)
   server.go          server struct: documents map, loaded analyzers, opts
   document.go        in-memory text buffers, byte<->UTF-16 line/col
-  diagnostics.go     run pkg/runner -> publishDiagnostics
+  diagnostics.go     run internal/runner -> publishDiagnostics
   codeaction.go      effect.Op -> WorkspaceEdit, quick-fix actions
   config.go          discover/load rule files at init
 ```
@@ -33,7 +33,7 @@ cmd/pastals/
 
 1. **`initialize`**: read `initializationOptions.rules` (a list of
    globs, default `./pasta.cue`, `./.pasta/**/*.cue`,
-   `./analyzers/**/*.cue`). Load via `pkg/runner.LoadRules`. Cache
+   `./analyzers/**/*.cue`). Load via `internal/runner.LoadRules`. Cache
    the analyzer set on the server.
 
 2. **`textDocument/didOpen` / `didChange`**: store full file text in
@@ -86,7 +86,7 @@ UTF-16 code units. Pasta produces byte offsets. The converter:
 Cache the line table per document; invalidate on `didChange`. ASCII
 fast path (no multi-byte runes) avoids the rune walk.
 
-Put this in `pkg/lspconv/` (separate package) so it can be unit-
+Put this in `internal/lspconv/` (separate package) so it can be unit-
 tested independently of the LSP server.
 
 ## Configuration
@@ -114,7 +114,7 @@ spam errors when the workspace happens to lack a config).
 - **VS Code**: thin extension under `editors/vscode/`. Spawns
   `pastals` via `vscode-languageclient`. `documentSelector` registers
   every extension declared by loaded `lang/*` packages — query
-  `pkg/lang.AllExtensions()` and emit it during the extension's
+  `internal/lang.AllExtensions()` and emit it during the extension's
   build. Settings panel exposes `pasta.rules`, `pasta.runOnSave`,
   `pasta.fixOnSave`.
 
@@ -156,7 +156,7 @@ Three action shapes:
    rule_name`. Built from that diagnostic's stashed ops.
 2. **`source.fixAll.pasta`** — fixes every diagnostic in the
    document with a non-empty rewrite. Conflict detection mirrors
-   `pkg/apply.Apply` — overlapping ops drop later ops with a log
+   `internal/apply.Apply` — overlapping ops drop later ops with a log
    note rather than failing the whole action.
 3. **`source.organizeImports`-style placeholder** — none for v1.
 
@@ -165,7 +165,7 @@ fixing (VS Code: `editor.codeActionsOnSave`).
 
 ## Testing
 
-- `pkg/lspconv/`: table-driven byte↔UTF-16 conversion tests; ASCII,
+- `internal/lspconv/`: table-driven byte↔UTF-16 conversion tests; ASCII,
   multi-byte, surrogate-pair, multi-line, edge cases (empty, trailing
   newline, no-final-newline).
 - `cmd/pastals/`: integration tests using `testscript` (per Jason's
@@ -191,7 +191,7 @@ fixing (VS Code: `editor.codeActionsOnSave`).
 
 ## Effort
 
-- `pkg/lspconv/` byte↔UTF-16 + tests: ~half day.
+- `internal/lspconv/` byte↔UTF-16 + tests: ~half day.
 - `cmd/pastals/` server skeleton (init, didOpen/didChange, publish
   diagnostics): ~1 day.
 - Code actions + Diagnostic.Data round-trip: ~half day.

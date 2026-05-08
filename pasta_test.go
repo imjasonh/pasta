@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/imjasonh/pasta/pkg/runner"
+	"github.com/imjasonh/pasta/internal/runner"
 )
 
 func TestAnalyzers(t *testing.T) {

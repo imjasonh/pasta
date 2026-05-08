@@ -1,4 +1,4 @@
-# pasta
+# 🍝 pasta
 
 `pasta` is a a polyglot static-analysis and structured edit tool.
 
@@ -132,6 +132,11 @@ for source files in any registered language, runs the rules, and verifies:
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
 
+## LSP
+
+The repo also has an [LSP](https://en.wikipedia.org/wiki/Language_Server_Protocol) server, `pastals`. The [`.editors/`](./editors/) directory has instructions about setting this up for your IDE; I've only tested it with Zed.
+
+If you specify rules in your repo at `pasta.cue` or `.pasta/**/*.cue`, these rules will be loaded and evaluated.
 
 -----
 

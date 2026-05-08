@@ -1,0 +1,34 @@
+package a
+
+import (
+	"widget"
+)
+
+func use(name string) {
+	// v1.2.3 added a trailing opts arg — old single-arg callers
+	// should be rewritten to pass nil.
+	_ = widget.Render("hello", nil) // want `widget\.Render gained an opts \*Options arg in v1\.2\.3`
+	_ = widget.Render(name, nil)    // want `widget\.Render gained an opts \*Options arg in v1\.2\.3`
+
+	// Already migrated — two args present, leave alone.
+	_ = widget.Render(name, nil)
+
+	// Different method on the same package — out of scope.
+	_ = widget.Update(name)
+
+	// Different package — out of scope, even with the same method name.
+	_ = other.Render(name)
+
+	// v1.3.0 renamed OldName to NewName. Both bare references and call
+	// sites get rewritten because the rule matches the selector itself.
+	_ = widget.NewName        // want `widget\.OldName was renamed to widget\.NewName in v1\.3\.0`
+	_ = widget.NewName("arg") // want `widget\.OldName was renamed to widget\.NewName in v1\.3\.0`
+
+	// Already migrated — leave alone.
+	_ = widget.NewName
+	_ = widget.NewName("arg")
+}
+
+var other struct {
+	Render func(string) string
+}

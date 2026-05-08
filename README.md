@@ -3,7 +3,9 @@
 A polyglot static-analysis framework: tree-sitter for parsing, CUE for rule
 schemas. Inspired by Go's `golang.org/x/tools/go/analysis`.
 
-See [plan.md](./plan.md) for the design rationale and DSL specification.
+See [plan.md](./plan.md) for the design rationale and DSL specification,
+[cue.md](./cue.md) for the case for CUE specifically, and
+[future-work.md](./future-work.md) for what's deliberately not yet done.
 
 ## Status
 
@@ -58,7 +60,7 @@ marks rules that include an automatic rewrite.
 |---|---|
 | [rust_needless_bool](./analyzers/rust_needless_bool/rust_needless_bool.cue) ✏️ | `if cond { true } else { false }` → `cond`; `if cond { false } else { true }` → `!(cond)` (clippy `needless_bool`) |
 | [rust_println_panic](./analyzers/rust_println_panic/rust_println_panic.cue) ✏️ | Drop redundant `println!()` immediately before `panic!()` |
-| [rust_dbg_macro](./analyzers/rust_dbg_macro/rust_dbg_macro.cue)                | Flag committed `dbg!()` invocations |
+| [rust_dbg_macro](./analyzers/rust_dbg_macro/rust_dbg_macro.cue) ✏️             | Flag committed `dbg!()` invocations and rewrite `dbg!(expr)` to `expr` |
 | [rust_deprecated_use](./analyzers/rust_deprecated_use/rust_deprecated_use.cue) | Flag calls to `#[deprecated]` functions (fact passing) |
 | [rust_taint](./analyzers/rust_taint/rust_taint.cue)                            | Track taint from `env::var()` through let bindings to `Command::new` (fact passing + fixpoint) |
 
@@ -122,48 +124,11 @@ my-rule/
 for source files in any registered language, runs the rules, and verifies:
 
 1. Every diagnostic emitted by a rule matches a `// want "regex"` marker
-   on the same line of the source.
+   on the same line of the source. `// want:+N "regex"` shifts the
+   expected line by N (useful when the rewrite itself deletes the
+   marker line).
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
 
-## Languages
-
-Registered grammars (see `pkg/lang/lang.go`):
-
-| Language | Extension | Comment node types |
-|----------|-----------|--------------------|
-| Go       | `.go`     | `comment` |
-| Python   | `.py`     | `comment` |
-| Rust     | `.rs`     | `line_comment`, `block_comment`, `doc_comment` |
-
-Adding a language is a small data change in `pkg/lang/lang.go` — wire the
-smacker tree-sitter grammar import and list its comment node types.
-
-## Tests
-
-```
-go test ./...
-```
-
-The top-level `pasta_test.go` walks `analyzers/*/` and runs each via
-`runner.TestDir`. Adding an analyzer is `mkdir analyzers/foo` + write
-`foo.cue` and `testdata/`; no Go test wrapper required.
-
-## Layout
-
-| Path | What it is |
-|------|------------|
-| `schema/schema.cue`     | CUE schema for analyzer/rule/pattern types. |
-| `pkg/dsl/`              | Go structs mirroring the schema. |
-| `pkg/loader/`           | CUE → Go decoder, validates rules at load time. |
-| `pkg/lang/`             | Language registry: extension → grammar + comment types. |
-| `pkg/tsutil/`           | Tree-sitter Node abstraction. |
-| `pkg/match/`            | Pattern matcher: node unions, fields, adjacent windows, preceding, predicates, pre-condition checks. |
-| `pkg/effect/`           | Compiles edits to byte-range ops with @-interpolation and comment preservation. |
-| `pkg/apply/`            | Applies ops to source bytes with conflict detection. |
-| `pkg/engine/`           | Top-level orchestrator. |
-| `pkg/runner/`           | Programmatic API used by both the CLI and Go tests. |
-| `analyzers/iferr/`      | iferr analyzer (CUE + testdata). |
-| `analyzers/negcmp/`     | negcmp analyzer (CUE + testdata). |
-| `cmd/pasta/`            | CLI. |
-| `pasta_test.go`         | One root test that exercises every directory under `analyzers/`. |
+Working in this repo? See [CLAUDE.md](./CLAUDE.md) for layout, how
+to add a new analyzer or language, and conventions worth knowing.

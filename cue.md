@@ -47,12 +47,3 @@ analysis too.
   directory that has the shape of `#Language` is registered at
   startup, so a user can declare a new file extension or grammar alias
   inline next to their rules.
-
-## What CUE could do that we don't yet exploit
-
-Several CUE-specific wins remain unrealized — pattern libraries
-(`github.com/imjasonh/pasta/patterns/<lang>` with reusable fragments like
-`#NilComparison`), load-time fact dependency validation, capture
-validation, conditional-field language polymorphism, and a
-lattice-style fact model. Each is tracked in
-[future-work.md](./future-work.md) under the "CUE leverage" section.

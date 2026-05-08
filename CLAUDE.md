@@ -4,6 +4,16 @@ Notes for future coding agents (and humans). The user-facing pitch lives
 in [README.md](./README.md); this file is the maintenance / navigation
 side.
 
+## Workflow rules
+
+NEVER `git commit` or `git push` without Jason's explicit approval in
+the current turn. "Make this change", "fix that", or "do these things"
+is **not** approval to commit. He will say "commit", "commit and
+push", or "ship it" when he wants a commit. Approval given earlier in
+the conversation does **not** carry forward — every commit needs its
+own go-ahead. When work is in a committable state, stop and report
+it; let him decide whether to commit.
+
 ## Running everything
 
 ```

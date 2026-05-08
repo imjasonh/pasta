@@ -95,12 +95,6 @@ func ByExt(ext string) (Language, bool) {
 	return Language{}, false
 }
 
-// ByName returns the language registered with the given name.
-func ByName(name string) (Language, bool) {
-	l, ok := All[name]
-	return l, ok
-}
-
 // Register adds (or replaces) a language in the live registry. The
 // LanguageDecl's `Grammar` must reference a registered grammar in the
 // Grammars map. Returns an error if the grammar is unknown.

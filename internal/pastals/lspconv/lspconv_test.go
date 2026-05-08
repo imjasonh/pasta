@@ -41,42 +41,6 @@ func TestPositionFromByte(t *testing.T) {
 	}
 }
 
-// TestRoundTrip checks byte→position→byte round-trips for offsets
-// that fall on rune boundaries (which is what tree-sitter always
-// produces). Mid-rune offsets aren't expected in practice and have no
-// well-defined LSP position.
-func TestRoundTrip(t *testing.T) {
-	cases := []string{
-		"hello world",
-		"line1\nline2\nline3",
-		"café\nrésumé\n",
-		"x🎉y\n🎁z",
-		"",
-		"\n\n\n",
-	}
-	for _, src := range cases {
-		d := New([]byte(src))
-		boundaries := runeBoundaries(src)
-		for _, i := range boundaries {
-			p := d.PositionFromByte(uint32(i))
-			b := d.ByteFromPosition(p)
-			if int(b) != i {
-				t.Errorf("src=%q byte=%d: pos %v -> byte %d (want %d)", src, i, p, b, i)
-			}
-		}
-	}
-}
-
-func runeBoundaries(s string) []int {
-	out := []int{0}
-	for i := range s {
-		if i > 0 {
-			out = append(out, i)
-		}
-	}
-	out = append(out, len(s))
-	return out
-}
 
 func TestRangeFromBytes(t *testing.T) {
 	src := "if x == nil {\n  return\n}"

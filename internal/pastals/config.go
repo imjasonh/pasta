@@ -75,15 +75,6 @@ func uriToPath(u string) (string, error) {
 	return p, nil
 }
 
-// pathToURI is the inverse of uriToPath. Input must be absolute.
-func pathToURI(p string) string {
-	if runtime.GOOS == "windows" {
-		p = "/" + strings.ReplaceAll(p, "\\", "/")
-	}
-	u := &url.URL{Scheme: "file", Path: p}
-	return u.String()
-}
-
 // resolveRuleFiles expands cfg.Rules relative to root and returns the
 // list of existing CUE files. Globs (** and *) are expanded with
 // filepath.Glob (which doesn't natively support `**`); we implement a

@@ -1,27 +1,29 @@
 // iferr is a port of github.com/imjasonh/iferr-analyzer to the pasta DSL.
 // It suggests inlining error assignments into if conditions where possible.
 //
-// Two rules cooperate:
+// Three rules:
 //
-//   inline_define — handles `:=` assignments. Simpler scope rules apply
-//                   because the variable is introduced by the assignment.
-//   inline_assign — handles `=` assignments and may also absorb a
-//                   preceding `var X T` declaration. Stricter scope and
-//                   shape checks apply because the variable lives in an
-//                   outer scope.
+//   inline_define   — handles `:=` assignments. Variable is introduced
+//                     by the assignment.
+//   inline_assign   — handles `=` assignments without a preceding
+//                     `var X T` declaration.
+//   inline_assign_with_decl — handles `=` assignments preceded by
+//                     `var X T`, absorbing the declaration into the
+//                     rewrite.
 //
-// Both rules look for the pattern:
+// All three look for the pattern:
 //
 //     <assign>     // err := foo()    or    err = foo()
 //     <if_stmt>    // if err != nil { ... }
 //
-// and rewrite it to:
+// and rewrite to:
 //
 //     if <assign>; <cond> { ... }
 //
+// (inline_assign_with_decl additionally deletes the `var X T` line.)
+//
 // The semantic checks (no later use, no named-result clash, etc.) are
-// expressed as generic `pre_conditions` parameterized by Go grammar
-// node names — there is no Go-specific code in the framework.
+// generic preconditions parameterized by Go grammar node names.
 
 package go_iferr
 
@@ -30,6 +32,65 @@ import (
 	golang "github.com/imjasonh/pasta/lang/go"
 	gopat "github.com/imjasonh/pasta/patterns/go"
 )
+
+// _ifNilCond is the shared shape: an if-statement with no init, whose
+// condition is a binary `==`/`!=` against nil where the non-nil side
+// is the last identifier of @lhs_list.
+_ifNilCond: schema.#Capture & {
+	capture: "if_stmt"
+	pattern: {
+		node: "if_statement"
+		absent_fields: ["initializer"]
+		fields: condition: {
+			capture: "cond"
+			pattern: {
+				node: "binary_expression"
+				fields: {
+					left:     {capture: "cond_x"}
+					operator: {capture: "cond_op"}
+					right:    {capture: "cond_y"}
+				}
+				where: [
+					{op: "matches", args:        ["@cond_op", "==|!="]},
+					{op: "nil_comparison", args: ["@cond_x", "@cond_y", "@lhs_list"]},
+				]
+			}
+		}
+	}
+}
+
+// _noLaterUse: no LHS variable may be referenced anywhere in the
+// enclosing function except inside the assign+if range.
+_noLaterUseInFunctionBody: {
+	check: "ancestor_field_subtree_no_ident"
+	args: {
+		anchor:         "@if_stmt"
+		ancestor_types: gopat.FunctionLikeTypes
+		field:          "body"
+		source:         "@lhs_list"
+		exclude_start:  string
+		exclude_end:    "@if_stmt"
+	}
+}
+
+// _notNamedResult: none of the LHS variables may be a named result
+// parameter (bare returns implicitly read those).
+_notNamedResult: {
+	check: "ancestor_field_subtree_no_ident"
+	args: {
+		anchor:         "@if_stmt"
+		ancestor_types: gopat.FunctionLikeTypes
+		field:          "result"
+		source:         "@lhs_list"
+	}
+}
+
+// _allLHSAreIdents: every LHS expression must be a plain identifier.
+// Rejects `t.val, err = bar()`.
+_allLHSAreIdents: {
+	check: "all_children_type"
+	args: {cap: "@lhs_list", type: "identifier"}
+}
 
 go_iferr: schema.#Analyzer & {
 	name:    "go_iferr"
@@ -67,37 +128,12 @@ go_iferr: schema.#Analyzer & {
 							}
 						}
 					},
-					{
-						capture: "if_stmt"
-						pattern: {
-							node: "if_statement"
-							absent_fields: ["initializer"]
-							fields: {
-								condition: {
-									capture: "cond"
-									pattern: {
-										node: "binary_expression"
-										fields: {
-											left:     {capture: "cond_x"}
-											operator: {capture: "cond_op"}
-											right:    {capture: "cond_y"}
-										}
-										where: [
-											{op: "matches", args:        ["@cond_op", "==|!="]},
-											{op: "nil_comparison", args: ["@cond_x", "@cond_y", "@lhs_list"]},
-										]
-									}
-								}
-							}
-						}
-					},
+					_ifNilCond,
 				]
 			}
 
 			// Semantic gate: none of the variables introduced by the `:=`
-			// may be referenced in the same block after the if. Inlining
-			// would push the declaration into the if-init scope, where
-			// later uses can no longer see it.
+			// may be referenced in the same block after the if.
 			pre_conditions: [{
 				check: "siblings_after_no_ident"
 				args: {
@@ -108,7 +144,6 @@ go_iferr: schema.#Analyzer & {
 
 			rewrite_opts: {
 				preserve_comments: true
-				preserve_indent:   true
 			}
 
 			diagnose: {
@@ -123,12 +158,11 @@ go_iferr: schema.#Analyzer & {
 		}
 
 		// ============================================================
-		// Rule 2: inline_assign — plain assignments (`=`)
+		// Rule 2: inline_assign — plain assignment, no preceding var-decl
 		//
-		//   var err error                 if err := foo(); err != nil {
-		//   err = foo()           --->        return err
-		//   if err != nil {                }
-		//       return err
+		//   err = foo()                   if err := foo(); err != nil {
+		//   if err != nil {       --->        return err
+		//       return err                }
 		//   }
 		// ============================================================
 		inline_assign: {
@@ -152,79 +186,79 @@ go_iferr: schema.#Analyzer & {
 							}
 							where: [{op: "token_eq", args: ["@assign_op", "="]}]
 						}
-						preceding: {
-							capture:    "var_decl"
-							quantifier: "?"
-							pattern: {node: "var_declaration"}
-						}
 					},
-					{
-						capture: "if_stmt"
-						pattern: {
-							node: "if_statement"
-							absent_fields: ["initializer"]
-							fields: {
-								condition: {
-									capture: "cond"
-									pattern: {
-										node: "binary_expression"
-										fields: {
-											left:     {capture: "cond_x"}
-											operator: {capture: "cond_op"}
-											right:    {capture: "cond_y"}
-										}
-										where: [
-											{op: "matches", args:        ["@cond_op", "==|!="]},
-											{op: "nil_comparison", args: ["@cond_x", "@cond_y", "@lhs_list"]},
-										]
-									}
-								}
-							}
-						}
-					},
+					_ifNilCond,
 				]
 			}
 
 			pre_conditions: [
-				// Every LHS expression must be a plain identifier.
-				// Rejects `t.val, err = bar()`.
-				{
-					check: "all_children_type"
-					args: {cap: "@lhs_list", type: "identifier"}
-				},
+				_allLHSAreIdents,
+				_noLaterUseInFunctionBody & {args: exclude_start: "@assign"},
+				_notNamedResult,
+			]
 
-				// No LHS variable may be referenced anywhere in the
-				// enclosing function except inside the assign+if range
-				// (and the absorbed var_decl, if any).
-				{
-					check: "ancestor_field_subtree_no_ident"
-					args: {
-						anchor:         "@if_stmt"
-						ancestor_types: gopat.FunctionLikeTypes
-						field:          "body"
-						source:         "@lhs_list"
-						exclude_start:  "@var_decl|@assign"
-						exclude_end:    "@if_stmt"
-					}
-				},
+			rewrite_opts: {
+				preserve_comments: true
+			}
 
-				// None of the LHS variables may be a named result
-				// parameter. Bare returns implicitly read named results
-				// without producing identifier references.
-				{
-					check: "ancestor_field_subtree_no_ident"
-					args: {
-						anchor:         "@if_stmt"
-						ancestor_types: gopat.FunctionLikeTypes
-						field:          "result"
-						source:         "@lhs_list"
-					}
-				},
+			diagnose: {
+				message:  "can inline assignment into if statement"
+				severity: "warning"
+			}
 
-				// If a `var_decl` was captured, it must declare exactly
-				// the LHS variables (non-blank, no initializer values).
-				// Optional: when `var_decl` is unbound the check is
-				// skipped, and the rule still fires.
+			rewrite: edits: [
+				{delete_from: "assign", delete_to: "cond"},
+				{within: "assign", token: "=", replace_with: ":="},
+				{position: "before", anchor: "cond", text: "if @assign; "},
+			]
+		}
+
+		// ============================================================
+		// Rule 3: inline_assign_with_decl — plain assignment with a
+		//                                   preceding `var X T`
+		//
+		//   var err error                 if err := foo(); err != nil {
+		//   err = foo()           --->        return err
+		//   if err != nil {                }
+		//       return err
+		//   }
+		// ============================================================
+		inline_assign_with_decl: {
+			name:      "inline_assign_with_decl"
+			doc:       "Inline = assignment + preceding var-decl into if condition"
+			languages: [golang.Name]
+			requires: []
+			provides: []
+
+			match: {
+				node: gopat.StmtListContainers
+				adjacent: [
+					{
+						capture: "assign"
+						pattern: {
+							node: "assignment_statement"
+							fields: {
+								left:     {capture: "lhs_list"}
+								operator: {capture: "assign_op"}
+								right:    {capture: "rhs"}
+							}
+							where: [{op: "token_eq", args: ["@assign_op", "="]}]
+						}
+						preceding: {
+							capture: "var_decl"
+							pattern: {node: "var_declaration"}
+						}
+					},
+					_ifNilCond,
+				]
+			}
+
+			pre_conditions: [
+				_allLHSAreIdents,
+				_noLaterUseInFunctionBody & {args: exclude_start: "@var_decl"},
+				_notNamedResult,
+				// The captured var_decl must declare exactly the LHS
+				// variables (non-blank, no initializer values).
 				{
 					check: "decl_matches_idents"
 					args: {
@@ -233,13 +267,11 @@ go_iferr: schema.#Analyzer & {
 						spec_type:   "var_spec"
 						value_field: "value"
 					}
-					optional: true
 				},
 			]
 
 			rewrite_opts: {
 				preserve_comments: true
-				preserve_indent:   true
 			}
 
 			diagnose: {

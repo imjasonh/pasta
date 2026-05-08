@@ -89,47 +89,6 @@ func (d *Doc) RangeFromBytes(start, end uint32) Range {
 	}
 }
 
-// ByteFromPosition converts an LSP Position back to a byte offset.
-// Used when the editor sends us a `Range` (e.g. on a code-action
-// request) and we need to look up the source slice.
-func (d *Doc) ByteFromPosition(p Position) uint32 {
-	if int(p.Line) >= len(d.lineStarts) {
-		return uint32(len(d.src))
-	}
-	lineStart := d.lineStarts[p.Line]
-	lineEnd := len(d.src)
-	if int(p.Line)+1 < len(d.lineStarts) {
-		lineEnd = d.lineStarts[p.Line+1]
-	}
-	line := d.src[lineStart:lineEnd]
-	if d.asciiOnly[p.Line] {
-		col := int(p.Character)
-		if col > len(line) {
-			col = len(line)
-		}
-		return uint32(lineStart + col)
-	}
-	// Walk runes, counting UTF-16 code units, until we reach Character.
-	want := int(p.Character)
-	used := 0
-	i := 0
-	for i < len(line) && used < want {
-		r, size := utf8.DecodeRune(line[i:])
-		if r == utf8.RuneError && size == 1 {
-			i++
-			used++
-			continue
-		}
-		if r > 0xFFFF {
-			used += 2
-		} else {
-			used++
-		}
-		i += size
-	}
-	return uint32(lineStart + i)
-}
-
 // utf16Col counts UTF-16 code units in s. Fast path for pure ASCII
 // lines: byte length == UTF-16 code units.
 func utf16Col(s []byte, asciiFastPath bool) uint32 {

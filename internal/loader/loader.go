@@ -117,48 +117,22 @@ func cueErrDetails(err error) string {
 	return errors.Details(cerr, nil)
 }
 
-// LoadLang loads a single embedded lang/<name>/<name>.cue file using
-// the same overlay mechanism as user CUE — synthesizing a cue.mod and
-// vendoring the embedded github.com/imjasonh/pasta module — and
-// returns the decoded Config field as a LanguageDecl.
-//
-// langPath is the path WITHIN the embedded FS, e.g.
-// "cuemod/lang/go/go.cue". The decoded LanguageDecl's Name field is
-// populated from the directory base.
+// LoadLang loads a single embedded lang/<name>/<name>.cue file and
+// returns the decoded Config field as a LanguageDecl. langPath is the
+// path WITHIN the embedded FS, e.g. "cuemod/lang/go/go.cue".
 func LoadLang(langPath string) (dsl.LanguageDecl, error) {
 	src, err := embeddedFS.ReadFile(langPath)
 	if err != nil {
 		return dsl.LanguageDecl{}, fmt.Errorf("read embedded %s: %w", langPath, err)
 	}
+	// Use a synthetic workdir so the overlay's cue.mod/pkg vendoring
+	// doesn't collide with anything on disk.
+	virtualPath := filepath.Join(string(filepath.Separator), "embedded", langPath)
 
-	// Build a virtual workdir whose only on-disk entry is the lang
-	// file. The overlay vendors schema/etc. under cue.mod/pkg.
-	workDir := filepath.Join(string(filepath.Separator), "embedded", filepath.Dir(langPath))
-	filePath := filepath.Join(workDir, filepath.Base(langPath))
-
-	overlay, err := buildOverlay(workDir, filePath)
+	v, err := buildCUE(src, virtualPath)
 	if err != nil {
 		return dsl.LanguageDecl{}, err
 	}
-	overlay[filePath] = load.FromBytes(src)
-
-	cfg := &load.Config{Dir: workDir, Overlay: overlay}
-	insts := load.Instances([]string{filePath}, cfg)
-	if len(insts) == 0 {
-		return dsl.LanguageDecl{}, fmt.Errorf("no instances loaded from %s", langPath)
-	}
-	if err := insts[0].Err; err != nil {
-		return dsl.LanguageDecl{}, fmt.Errorf("load %s: %s", langPath, cueErrDetails(err))
-	}
-	ctx := cuecontext.New()
-	v := ctx.BuildInstance(insts[0])
-	if err := v.Err(); err != nil {
-		return dsl.LanguageDecl{}, fmt.Errorf("build %s: %s", langPath, cueErrDetails(err))
-	}
-	if err := v.Validate(cue.Concrete(true)); err != nil {
-		return dsl.LanguageDecl{}, fmt.Errorf("validate %s: %s", langPath, cueErrDetails(err))
-	}
-
 	cfgVal := v.LookupPath(cue.ParsePath("Config"))
 	if !cfgVal.Exists() {
 		return dsl.LanguageDecl{}, fmt.Errorf("%s: no Config field", langPath)
@@ -177,59 +151,65 @@ func LoadLang(langPath string) (dsl.LanguageDecl, error) {
 	return ld, nil
 }
 
+// loadBytes is the core CUE-loading path: take src (the file
+// contents) and a virtualPath where it logically lives, build the
+// overlay (cue.mod synthesis + module vendoring), compile, validate,
+// and extract Analyzers / Languages.
+//
+// `virtualPath` doesn't need to exist on disk — the bytes are passed
+// directly via the overlay. Used by:
+//   - loadPath, after reading the file from disk
+//   - LoadLang, after reading from the embedded FS
+//   - tests, which can pass arbitrary bytes without touching disk
+func loadBytes(src []byte, virtualPath string) (LoadResult, error) {
+	v, err := buildCUE(src, virtualPath)
+	if err != nil {
+		return LoadResult{}, err
+	}
+	return extractTopLevel(v)
+}
+
+// buildCUE runs the overlay → load → build → validate pipeline on
+// src placed at virtualPath, returning a CUE value ready for decoding.
+// All five callers (LoadDir, loadPath, LoadLang, loadBytes, ...)
+// share this rather than re-implementing the pipeline.
+func buildCUE(src []byte, virtualPath string) (cue.Value, error) {
+	workDir := filepath.Dir(virtualPath)
+	overlay, err := buildOverlay(workDir, virtualPath)
+	if err != nil {
+		return cue.Value{}, err
+	}
+	overlay[virtualPath] = load.FromBytes(src)
+
+	cfg := &load.Config{Dir: workDir, Overlay: overlay}
+	insts := load.Instances([]string{virtualPath}, cfg)
+	if len(insts) == 0 {
+		return cue.Value{}, fmt.Errorf("no instances loaded from %s", virtualPath)
+	}
+	if err := insts[0].Err; err != nil {
+		return cue.Value{}, fmt.Errorf("load %s: %s", virtualPath, cueErrDetails(err))
+	}
+	ctx := cuecontext.New()
+	v := ctx.BuildInstance(insts[0])
+	if err := v.Err(); err != nil {
+		return cue.Value{}, fmt.Errorf("build %s: %s", virtualPath, cueErrDetails(err))
+	}
+	if err := v.Validate(cue.Concrete(true)); err != nil {
+		return cue.Value{}, fmt.Errorf("validate %s: %s", virtualPath, cueErrDetails(err))
+	}
+	return v, nil
+}
+
 func loadPath(path string) (LoadResult, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return LoadResult{}, err
 	}
-	userDir := filepath.Dir(abs)
-	overlay, err := buildOverlay(userDir, abs)
+	src, err := os.ReadFile(abs)
 	if err != nil {
-		return LoadResult{}, err
+		return LoadResult{}, fmt.Errorf("read %s: %w", abs, err)
 	}
-	cfg := &load.Config{
-		Dir:     userDir,
-		Overlay: overlay,
-	}
-	insts := load.Instances([]string{abs}, cfg)
-	if len(insts) == 0 {
-		return LoadResult{}, fmt.Errorf("no CUE instances loaded from %s", abs)
-	}
-	if err := insts[0].Err; err != nil {
-		return LoadResult{}, fmt.Errorf("load %s: %s", abs, cueErrDetails(err))
-	}
-	ctx := cuecontext.New()
-	v := ctx.BuildInstance(insts[0])
-	if err := v.Err(); err != nil {
-		return LoadResult{}, fmt.Errorf("build %s: %s", abs, cueErrDetails(err))
-	}
-	if err := v.Validate(cue.Concrete(true)); err != nil {
-		return LoadResult{}, fmt.Errorf("validate %s: %s", abs, cueErrDetails(err))
-	}
-	return extractTopLevel(v)
-}
-
-// LoadFS is retained for tests that supply CUE via an in-memory fs.FS.
-// It writes each file to a tempdir and calls LoadFile on the first.
-func LoadFS(fsys fs.FS, paths ...string) (*dsl.Analyzer, error) {
-	if len(paths) == 0 {
-		return nil, fmt.Errorf("no paths supplied")
-	}
-	tmp, err := os.MkdirTemp("", "pasta-load-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tmp)
-	for _, p := range paths {
-		b, err := fs.ReadFile(fsys, p)
-		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", p, err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, filepath.Base(p)), b, 0o644); err != nil {
-			return nil, err
-		}
-	}
-	return LoadFile(filepath.Join(tmp, filepath.Base(paths[0])))
+	return loadBytes(src, abs)
 }
 
 // buildOverlay synthesizes any missing cue.mod for the user directory

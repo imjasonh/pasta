@@ -212,63 +212,11 @@ func pickDiagAnchor(rule *dsl.Rule, m match.Match) tsutil.Node {
 
 func runPreconditions(rule *dsl.Rule, env *match.Env, caps match.Captures) bool {
 	for _, pc := range rule.PreConditions {
-		if pc.Optional {
-			if !preconditionCapturesBound(pc, caps) {
-				continue
-			}
-		}
-		ok := env.Predicates.EvalCheck(pc.Check, pc.Args, env, caps)
-		if !ok {
-			if pc.Optional {
-				continue
-			}
+		if !env.Predicates.EvalCheck(pc.Check, pc.Args, env, caps) {
 			return false
 		}
 	}
 	return true
-}
-
-func preconditionCapturesBound(pc dsl.Precondition, caps match.Captures) bool {
-	for _, v := range pc.Args {
-		// Lists don't carry @capture refs, so they don't gate the
-		// optional check; only the string form does.
-		if v.IsList() {
-			continue
-		}
-		if !atRefHasBoundCapture(v.Str, caps) {
-			return false
-		}
-	}
-	return true
-}
-
-func atRefHasBoundCapture(arg string, caps match.Captures) bool {
-	if len(arg) == 0 || arg[0] != '@' {
-		return true
-	}
-	for _, alt := range splitOr(arg) {
-		name := alt
-		if len(name) > 0 && name[0] == '@' {
-			name = name[1:]
-		}
-		if _, ok := caps[name]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func splitOr(s string) []string {
-	var out []string
-	last := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '|' {
-			out = append(out, s[last:i])
-			last = i + 1
-		}
-	}
-	out = append(out, s[last:])
-	return out
 }
 
 func captureNamesFromAdjacent(adj []dsl.Child) []string {

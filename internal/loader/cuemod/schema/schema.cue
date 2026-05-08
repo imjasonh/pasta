@@ -9,8 +9,7 @@ package schema
 // ============================================================================
 
 #Fact: {
-	kind:    string
-	schema?: _
+	kind: string
 }
 
 // ============================================================================
@@ -18,13 +17,11 @@ package schema
 // ============================================================================
 
 #Capture: {
-	capture:     string
-	pattern?:    #Pattern
-	quantifier?: "*" | "+" | "?"
+	capture:  string
+	pattern?: #Pattern
 	// `preceding` is allowed on #Capture as well as #Pattern so that an
 	// adjacent element can both bind a name and look back at the prior
-	// sibling (e.g. iferr's `assign` capture absorbing a preceding
-	// `var X T` declaration).
+	// sibling.
 	preceding?: #Pattern | #Capture
 }
 
@@ -96,7 +93,6 @@ package schema
 
 #RewriteOpts: {
 	preserve_comments?: bool | *false
-	preserve_indent?:   bool | *true
 }
 
 // ============================================================================
@@ -115,7 +111,6 @@ package schema
 	// Each arg is either a string (a capture ref like "@foo", a regex,
 	// or a literal) or a list of strings (e.g. `ancestor_types: [...]`).
 	args: {[string]: string | [...string]}
-	optional?: bool | *false
 }
 
 // ============================================================================
@@ -130,7 +125,6 @@ package schema
 	provides: [...string]
 
 	languages: [...string] | *["*"]
-	file_match?: [...string]
 
 	match: #Pattern
 
@@ -175,11 +169,6 @@ package schema
 	rules: [string]: {
 		requires: [...or(_provided_facts)]
 	}
-}
-
-#Adapter: {
-	language: string
-	checks: [...string]
 }
 
 // ============================================================================

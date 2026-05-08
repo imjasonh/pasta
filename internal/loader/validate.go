@@ -47,21 +47,9 @@ func validateCaptures(a *dsl.Analyzer) error {
 	return fmt.Errorf("%s", strings.Join(errs, "; "))
 }
 
-// captureBound reports whether name resolves. `name` may be a bare
-// capture name OR a `|`-delimited fallback chain like "a|b|c" or
-// "@a|b|@c"; alternatives may carry redundant "@" prefixes (the engine
-// strips them in splitOr). We require *every* alternative to be
-// defined — a typo'd alternative is always a bug, even though the
-// engine falls back at runtime.
+// captureBound reports whether name resolves to a defined capture.
 func captureBound(name string, caps map[string]bool) bool {
-	for _, alt := range strings.Split(name, "|") {
-		alt = strings.TrimSpace(alt)
-		alt = strings.TrimPrefix(alt, "@")
-		if !caps[alt] {
-			return false
-		}
-	}
-	return true
+	return caps[strings.TrimPrefix(strings.TrimSpace(name), "@")]
 }
 
 // captureRef is a discovered reference: the capture name and a human

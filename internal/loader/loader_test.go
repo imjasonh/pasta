@@ -2,8 +2,23 @@ package loader
 
 import (
 	"testing"
-	"testing/fstest"
+
+	"github.com/imjasonh/pasta/internal/dsl"
 )
+
+// loadAnalyzerFromBytes is a test convenience that loads a single
+// analyzer directly from in-memory CUE bytes without touching disk.
+func loadAnalyzerFromBytes(t *testing.T, src, virtualName string) (*dsl.Analyzer, error) {
+	t.Helper()
+	res, err := loadBytes([]byte(src), "/virtual/"+virtualName)
+	if err != nil {
+		return nil, err
+	}
+	if len(res.Analyzers) == 0 {
+		t.Fatal("no analyzer in LoadResult")
+	}
+	return res.Analyzers[0], nil
+}
 
 func TestLoadRoundTrip(t *testing.T) {
 	src := `package sample
@@ -49,10 +64,7 @@ sample: schema.#Analyzer & {
 	}
 }
 `
-	fsys := fstest.MapFS{
-		"sample.cue": &fstest.MapFile{Data: []byte(src)},
-	}
-	a, err := LoadFS(fsys, "sample.cue")
+	a, err := loadAnalyzerFromBytes(t, src, "sample.cue")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -118,8 +130,7 @@ sample: schema.#Analyzer & {
 	}
 }
 `
-	fsys := fstest.MapFS{"a.cue": &fstest.MapFile{Data: []byte(src)}}
-	a, err := LoadFS(fsys, "a.cue")
+	a, err := loadAnalyzerFromBytes(t, src, "a.cue")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -166,8 +177,7 @@ bad: schema.#Analyzer & {
 	}
 }
 `
-	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
-	_, err := LoadFS(fsys, "bad.cue")
+	_, err := loadBytes([]byte(src), "/virtual/bad.cue")
 	if err == nil {
 		t.Fatal("expected error from unsatisfied requires; got nil")
 	}
@@ -203,8 +213,7 @@ bad: schema.#Analyzer & {
 	}
 }
 `
-	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
-	_, err := LoadFS(fsys, "bad.cue")
+	_, err := loadBytes([]byte(src), "/virtual/bad.cue")
 	if err == nil {
 		t.Fatal("expected error from unknown precondition check; got nil")
 	}
@@ -243,8 +252,7 @@ bad: schema.#Analyzer & {
 	}
 }
 `
-	fsys := fstest.MapFS{"bad.cue": &fstest.MapFile{Data: []byte(src)}}
-	_, err := LoadFS(fsys, "bad.cue")
+	_, err := loadBytes([]byte(src), "/virtual/bad.cue")
 	if err == nil {
 		t.Fatal("expected error from unknown capture; got nil")
 	}

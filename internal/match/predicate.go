@@ -128,20 +128,15 @@ func nonCommentNamedChildren(n tsutil.Node, env *Env) []tsutil.Node {
 	return out
 }
 
-// resolveCapture extracts a node by reference. ref may be "@name" (lookup
-// in caps), or a "|"-separated list of "@name" alternatives — the first
-// bound one wins. Non-@ values fail.
+// resolveCapture extracts a node by reference. ref must be "@name" —
+// the captured node bound to <name>. Non-@ refs and unknown names
+// return (zero, false).
 func resolveCapture(ref string, caps Captures) (tsutil.Node, bool) {
-	for _, alt := range strings.Split(ref, "|") {
-		alt = strings.TrimSpace(alt)
-		if !strings.HasPrefix(alt, "@") {
-			continue
-		}
-		if n, ok := caps[alt[1:]]; ok {
-			return n, true
-		}
+	if !strings.HasPrefix(ref, "@") {
+		return tsutil.Node{}, false
 	}
-	return tsutil.Node{}, false
+	n, ok := caps[ref[1:]]
+	return n, ok
 }
 
 // ============================================================================
@@ -311,22 +306,6 @@ func predAncestorIs(args []dsl.Arg, env *Env, caps Captures) bool {
 		}
 	}
 	return false
-}
-
-// splitOrInline splits "a|b|c" into ["a", "b", "c"] without trimming.
-// (predicate.go already has splitOr helper for capture refs but that's
-// in another file scope; re-declare locally.)
-func splitOrInline(s string) []string {
-	out := make([]string, 0, 2)
-	last := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '|' {
-			out = append(out, s[last:i])
-			last = i + 1
-		}
-	}
-	out = append(out, s[last:])
-	return out
 }
 
 // predStmtIndexDelta: [@a, @b, "N"] — true if @a and @b are siblings
@@ -730,22 +709,6 @@ func typeIn(set []string, t string) bool {
 		}
 	}
 	return false
-}
-
-func splitOr(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var out []string
-	last := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '|' {
-			out = append(out, strings.TrimSpace(s[last:i]))
-			last = i + 1
-		}
-	}
-	out = append(out, strings.TrimSpace(s[last:]))
-	return out
 }
 
 func setEqual(a, b map[string]bool) bool {

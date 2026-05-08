@@ -28,8 +28,7 @@ type Analyzer struct {
 
 // Fact is the type-level declaration of a fact kind.
 type Fact struct {
-	Kind   string         `json:"kind"`
-	Schema map[string]any `json:"schema,omitempty"`
+	Kind string `json:"kind"`
 }
 
 // Rule binds a pattern to effects.
@@ -39,7 +38,6 @@ type Rule struct {
 	Requires      []string       `json:"requires,omitempty"`
 	Provides      []string       `json:"provides,omitempty"`
 	Languages     []string       `json:"languages,omitempty"`
-	FileMatch     []string       `json:"file_match,omitempty"`
 	Match         Pattern        `json:"match"`
 	PreConditions []Precondition `json:"pre_conditions,omitempty"`
 	RewriteOpts   *RewriteOpts   `json:"rewrite_opts,omitempty"`
@@ -115,9 +113,6 @@ type Child struct {
 	// Capture (if non-empty, this is a capture-form).
 	Capture string `json:"capture,omitempty"`
 
-	// Quantifier on the capture: ?, *, +. Empty means required.
-	Quantifier string `json:"quantifier,omitempty"`
-
 	// Inline pattern (capture-form may also carry a constraining pattern).
 	Pattern *Pattern `json:"pattern,omitempty"`
 
@@ -162,7 +157,6 @@ func (c *Child) AsPattern() *Pattern {
 func (c *Child) UnmarshalJSON(data []byte) error {
 	type raw struct {
 		Capture      string           `json:"capture,omitempty"`
-		Quantifier   string           `json:"quantifier,omitempty"`
 		Pattern      *Pattern         `json:"pattern,omitempty"`
 		Node         json.RawMessage  `json:"node,omitempty"`
 		Fields       map[string]Child `json:"fields,omitempty"`
@@ -177,7 +171,6 @@ func (c *Child) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	c.Capture = r.Capture
-	c.Quantifier = r.Quantifier
 	c.Pattern = r.Pattern
 	c.Fields = r.Fields
 	c.Children = r.Children
@@ -258,9 +251,8 @@ type Predicate struct {
 
 // Precondition is a semantic check evaluated by the predicate registry.
 type Precondition struct {
-	Check    string         `json:"check"`
-	Args     map[string]Arg `json:"args"`
-	Optional bool           `json:"optional,omitempty"`
+	Check string         `json:"check"`
+	Args  map[string]Arg `json:"args"`
 }
 
 // Diagnostic is what the rule reports when it matches.
@@ -311,7 +303,6 @@ type Edit struct {
 // RewriteOpts controls rewrite behavior.
 type RewriteOpts struct {
 	PreserveComments bool `json:"preserve_comments,omitempty"`
-	PreserveIndent   bool `json:"preserve_indent,omitempty"`
 }
 
 // LanguageDecl is a CUE-side language declaration. The runtime resolves

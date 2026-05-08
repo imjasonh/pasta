@@ -89,16 +89,19 @@ func TestUriToPath_NonFileScheme(t *testing.T) {
 
 func TestPathURIRoundTrip(t *testing.T) {
 	// On Unix, /a/b/c -> file:///a/b/c -> /a/b/c.
-	cases := []string{"/a/b/c.go", "/tmp/x.cue", "/some path/with space.go"}
-	for _, p := range cases {
-		uri := pathToURI(p)
+	cases := map[string]string{
+		"file:///a/b/c.go":              "/a/b/c.go",
+		"file:///tmp/x.cue":             "/tmp/x.cue",
+		"file:///some%20path/file.go":   "/some path/file.go",
+	}
+	for uri, p := range cases {
 		got, err := uriToPath(uri)
 		if err != nil {
 			t.Errorf("uriToPath(%q): %v", uri, err)
 			continue
 		}
 		if got != p {
-			t.Errorf("round-trip: %q -> %q -> %q", p, uri, got)
+			t.Errorf("round-trip: %q -> %q (want %q)", uri, got, p)
 		}
 	}
 }

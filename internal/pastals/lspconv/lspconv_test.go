@@ -4,11 +4,11 @@ import "testing"
 
 func TestPositionFromByte(t *testing.T) {
 	cases := []struct {
-		name  string
-		src   string
-		byte  uint32
-		line  uint32
-		char  uint32
+		name string
+		src  string
+		byte uint32
+		line uint32
+		char uint32
 	}{
 		{"start", "abc\ndef\n", 0, 0, 0},
 		{"end of first line", "abc\ndef\n", 3, 0, 3},
@@ -40,7 +40,6 @@ func TestPositionFromByte(t *testing.T) {
 		})
 	}
 }
-
 
 func TestRangeFromBytes(t *testing.T) {
 	src := "if x == nil {\n  return\n}"

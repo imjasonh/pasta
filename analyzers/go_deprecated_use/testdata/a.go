@@ -12,7 +12,7 @@ func NewFn() {}
 func ReallyOld() {}
 
 func caller() {
-	OldFn()      // want `OldFn is deprecated`
-	NewFn()      // OK
-	ReallyOld()  // want `ReallyOld is deprecated`
+	OldFn()     // want `OldFn is deprecated`
+	NewFn()     // OK
+	ReallyOld() // want `ReallyOld is deprecated`
 }

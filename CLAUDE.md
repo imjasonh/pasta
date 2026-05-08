@@ -14,6 +14,30 @@ the conversation does **not** carry forward — every commit needs its
 own go-ahead. When work is in a committable state, stop and report
 it; let him decide whether to commit.
 
+## Pre-commit hook
+
+`scripts/pre-commit.sh` runs the same checks as CI (gofmt, go vet,
+go build, go test). It MUST be installed as the local pre-commit
+hook before any work in this repo. If `.git/hooks/pre-commit` is
+missing or doesn't point at the script, install it before doing
+anything else:
+
+```
+ln -sf ../../scripts/pre-commit.sh .git/hooks/pre-commit
+```
+
+Then verify with `ls -l .git/hooks/pre-commit`. The hook runs
+automatically on every `git commit`.
+
+NEVER skip the hook. Do not pass `--no-verify` to `git commit`. Do
+not set `core.hooksPath` to bypass it. Do not edit / delete /
+chmod -x the script to dodge a check. If a check fails, fix the
+underlying issue; don't reach for the bypass.
+
+If the hook is somehow not running (the developer cloned without
+running setup), reinstall it via the symlink above before
+committing — re-installing is always preferable to skipping.
+
 ## Running everything
 
 ```

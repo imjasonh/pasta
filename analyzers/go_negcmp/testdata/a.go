@@ -40,5 +40,5 @@ func mixedOps(a, b int) bool {
 
 // Comments inside the parens are preserved by the surgical rewrite.
 func keepsComments(a, b int) bool {
-	return !( /* leading */ a /* mid */ == b /* trailing */ ) // want "negated comparison can be simplified to .!=."
+	return !( /* leading */ a /* mid */ == b /* trailing */) // want "negated comparison can be simplified to .!=."
 }

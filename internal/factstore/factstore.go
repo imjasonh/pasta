@@ -36,9 +36,9 @@ type NameKey struct {
 // Fact is a stored fact: its kind, the byte range of its anchor, and an
 // opaque payload set by the emitting rule.
 type Fact struct {
-	Kind                string
-	StartByte, EndByte  uint32
-	Payload             map[string]any
+	Kind               string
+	StartByte, EndByte uint32
+	Payload            map[string]any
 }
 
 // Store is the per-run fact store.
@@ -58,10 +58,10 @@ func New() *Store {
 // identifierTypes are tree-sitter node types we treat as "identifier-like"
 // across grammars. Used to decide whether to populate the by-name index.
 var identifierTypes = map[string]bool{
-	"identifier":           true,
-	"type_identifier":      true,
-	"field_identifier":     true,
-	"property_identifier":  true,
+	"identifier":                    true,
+	"type_identifier":               true,
+	"field_identifier":              true,
+	"property_identifier":           true,
 	"shorthand_property_identifier": true,
 }
 

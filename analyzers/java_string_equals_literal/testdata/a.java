@@ -1,0 +1,21 @@
+class A {
+    boolean test1(String x) {
+        return x.equals("foo"); // want "flip `equals`"
+    }
+
+    boolean test2(String x) {
+        return "foo".equals(x); // OK: already flipped
+    }
+
+    boolean test3(String x, String y) {
+        return x.equals(y); // OK: argument is not a literal
+    }
+
+    boolean test4(String x) {
+        return x.equals("a", "b"); // OK: > 1 arg (not the equals we care about)
+    }
+
+    void unrelated(java.util.List<String> xs) {
+        xs.equals(null); // OK: not a string literal
+    }
+}

@@ -16,42 +16,100 @@ catching errors earlier, or unlocking cross-file analysis.
 
 ### `*` and `+` quantifiers in `adjacent`
 **Effort:** M.
-The matcher already does backtracking for `?`. `*` (zero-or-more) and
-`+` (one-or-more) follow the same shape but need extra bookkeeping for
-greedy match-up-to-N then back off. Useful for "any number of leading
-defer statements", "three or more consecutive slice appends".
+We currently have no adjacent quantifiers — even `?` was removed in
+favor of splitting into separate rules. Bringing them back (`*` for
+zero-or-more, `+` for one-or-more) would be useful for "any number of
+leading defer statements" or "three or more consecutive slice
+appends", but only when those shapes actually need to be matched
+inside one rule rather than via fact-passing.
 
-### `type_is` predicate
-**Effort:** L.
-Checks that a captured expression's inferred TYPE matches a name. This
-needs per-language type information — Go's `go/types`, TypeScript's
-checker, etc. — which means either bringing back per-language adapters
-or shelling out to language servers. The CUE rule layer is ready
-(`type_is` is in the schema as a stub); the runtime side is the work.
+### Type-aware predicates
+**Effort:** L. **Surfaced by:** rust_to_string_when_already_string,
+go_unused_assignment, ts_redundant_assertion, java_string_pool_compare,
+js_var_to_let (TDZ-safety check).
+Most "is this rewrite safe" rules need type information pasta doesn't
+have. Examples: `is x a String or a &str?` (Rust), `is this expression
+nullable?` (TypeScript), `does this `var` introduce a TDZ
+incompatibility?` (JavaScript). Wiring this up means either bringing
+back per-language adapters with real type checkers (Go's `go/types`,
+TS compiler, etc.) or shelling out to language servers. CUE side
+would expose `type_is`, `is_nullable`, `same_object` (resolve to the
+same declaration, not just same text — closes a known soundness gap
+in `same_ident`), and similar predicates.
 
 ### `all_match` meta-predicate
 **Effort:** M.
 Invokes a sub-predicate on every named child of a captured list:
 `{op: "all_match", args: [@list, "matches", "regex"]}`. Lets a rule
-say "every LHS expression is an identifier" without a custom predicate.
+say "every LHS expression is an identifier" without a custom check.
 DSL change: `Predicate.args` would need to allow nested predicate
 specs.
 
-### `same_object` predicate
-**Effort:** L.
-Checks that two captured identifiers resolve to the SAME declaration
-(not just same text). This is what `same_ident` should be when scope
-matters — but it requires full symbol resolution, which is per-language
-adapter territory. Today `same_ident` does text equality, which is
-adequate within a single function but conflates shadowed names.
+### File-extension / filename gating per rule
+**Effort:** S. **Surfaced by:** cpp_using_namespace_std (only really
+problematic in `.h`/`.hpp`), `*_test.go` rules, `*.spec.ts`-only
+rules.
+Today rules attach to a *language* (`languages: ["cpp"]`) but can't
+narrow to specific filenames or extensions. Schema once had a
+`file_match: [...string]` field — we removed it as dead, but this is
+the recurring use case. Wiring it through the engine is
+straightforward: skip rules whose glob doesn't include the current
+file's basename.
 
-### `file_match` filtering
-**Effort:** S.
-The schema declares `file_match?: [...string]` on `#Rule` for filename
-globs (e.g. `["*_test.go"]` to restrict a rule to test files). The
-runtime currently ignores this field. Wiring it through the engine is
-straightforward: skip rules whose `file_match` doesn't include the
-current file's basename.
+### Sibling-absence predicates
+**Effort:** S. **Surfaced by:** dockerfile_no_user (no `USER`
+directive in the file), bash_use_set_e (script body lacks `set -e`
+near top), python_missing_dunder_init (class lacks `__init__`).
+`absent_fields` covers field-level absence; nothing covers
+"this stmt list lacks a child of type X". A predicate like
+`{op: "no_child_of_type", args: [@cap, "type"]}` (or
+`{op: "subtree_lacks", args: [@cap, "type"]}`) would close it.
+
+### Conditional / branching rewrites (`yaml_truthy` shape)
+**Effort:** M. **Surfaced by:** yaml_truthy (would be a single rule if
+edits could branch on captured text), regex-canonicalizer rules,
+case-normalization rules.
+Today the rewrite shape is fixed at rule definition. A `cases:` edit
+form — pattern→replacement table evaluated at rewrite time — would
+let one rule say "if @x matches /yes|on/i emit `true`, else emit
+`false`". Less composable than two rules with disjoint matchers, but
+much more expressive for normalize-to-canonical-form patterns.
+
+### Sub-extraction from string captures
+**Effort:** L. **Surfaced by:** python_string_format_to_fstring
+(needs to pull `{}` placeholders out of a format-string capture),
+printf-style rewrites in any language.
+Captures are opaque text from pasta's perspective. Pulling structured
+content out of a string-literal capture (a list of `%s`/`%d` tokens,
+the inside of a `{...}`, etc.) would unlock a class of refactor rules
+that today need per-language Go code.
+
+### Indentation-aware rewrites (whitespace-sensitive languages)
+**Effort:** M. **Surfaced by:** python_redundant_else_after_return
+(can't auto-fix because the else-block needs dedenting).
+For Python and other indentation-significant languages, byte-range
+edits aren't enough — the matcher needs to understand the captured
+node's indent level and emit the rewrite at the right level. A
+helper that computes "how indented is @cap relative to its enclosing
+block" plus an interpolation-time `dedent` operation would cover the
+common cases.
+
+### Auto-import on rewrites
+**Effort:** M. **Surfaced by:** any rule that introduces a name
+from a different package or module than the original.
+If a rewrite uses `errors.As` and the file doesn't already import
+`errors`, the import block needs an entry added. No edit form
+expresses "ensure `import "x"` exists at the top of the file". A
+declarative `requires_import: ["errors"]` field on `#Rewrite`, with
+language-specific import-block walkers, would handle most cases.
+
+### `subtree_has_type` / `subtree_lacks_type`
+**Effort:** S. **Surfaced by:** rust_unsafe_no_safety attempt.
+A predicate `{op: "subtree_has", args: [@cap, "type"]}` that reports
+whether a captured node's subtree contains any descendant of the
+given type. Useful for "does this function body contain a `panic!()`".
+We have helpers (`subtreeReferences`) — exposing them as a predicate is
+straightforward.
 
 ### `subtree_has_type` / `subtree_lacks_type`
 **Effort:** S. **Surfaced by:** rust_unsafe_no_safety attempt.

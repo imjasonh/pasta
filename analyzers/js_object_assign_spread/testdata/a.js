@@ -1,4 +1,4 @@
-const a = Object.assign({}, src); // want `Object.assign\(\{\}, x\) can be written as \{\.\.\.x\}`
+const a = Object.assign({}, src); // want `Object.assign({}, x) can be written as {...x}`
 
 const b = Object.assign(target, src); // OK: target is not empty {}
 

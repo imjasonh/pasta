@@ -1,5 +1,5 @@
 fn compute(x: i32) -> i32 {
-    let y = x + 1; // want `dbg!\(\) macro invocation`
+    let y = x + 1; // want `dbg!() macro invocation`
     y * 2
 }
 
@@ -9,5 +9,5 @@ fn ok(x: i32) -> i32 {
 }
 
 fn nested(xs: Vec<i32>) -> i32 {
-    xs.iter().sum::<i32>() // want `dbg!\(\) macro invocation`
+    xs.iter().sum::<i32>() // want `dbg!() macro invocation`
 }

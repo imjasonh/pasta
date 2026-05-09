@@ -38,6 +38,8 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [go_empty_else](./analyzers/go_empty_else/go_empty_else.cue) ✏️               | Drop `else { }` empty-else branches |
 | [go_self_assignment](./analyzers/go_self_assignment/go_self_assignment.cue) ✏️ | Delete `x = x` self-assignments |
 | [go_panic_empty](./analyzers/go_panic_empty/go_panic_empty.cue)               | Flag `panic("")` with empty message |
+| [go_string_concat_empty](./analyzers/go_string_concat_empty/go_string_concat_empty.cue) ✏️ | Drop empty operand in `"" + x` / `x + ""` |
+| [go_for_range_one_literal](./analyzers/go_for_range_one_literal/go_for_range_one_literal.cue) | Flag `for _, v := range []T{x} {...}` — equivalent to a plain assignment |
 | [go_errcheck](./analyzers/go_errcheck/go_errcheck.cue) ✏️                     | Flag and rewrite `foo()` to `_ = foo()` when foo returns error (fact passing) |
 | [go_deprecated_use](./analyzers/go_deprecated_use/go_deprecated_use.cue)      | Flag calls to functions whose doc comment contains `Deprecated:` (fact passing) |
 | [go_taint](./analyzers/go_taint/go_taint.cue)                                  | Track taint from `os.Getenv` through assignments to `exec.Command` (fact passing + fixpoint) |
@@ -52,6 +54,8 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [python_isinstance_singleton](./analyzers/python_isinstance_singleton/python_isinstance_singleton.cue) ✏️ | `isinstance(x, (T,))` → `isinstance(x, T)` |
 | [python_dict_get_redundant_none](./analyzers/python_dict_get_redundant_none/python_dict_get_redundant_none.cue) ✏️ | `d.get(k, None)` → `d.get(k)` |
 | [python_assert_tuple](./analyzers/python_assert_tuple/python_assert_tuple.cue) ✏️  | `assert (cond, msg)` → `assert cond, msg` (real footgun -- tuple is always truthy) |
+| [python_explicit_object_base](./analyzers/python_explicit_object_base/python_explicit_object_base.cue) ✏️ | `class Foo(object):` → `class Foo:` (Py3 inherits from object implicitly) |
+| [python_redundant_else_after_return](./analyzers/python_redundant_else_after_return/python_redundant_else_after_return.cue) | Flag `if c: return x; else: y` — outdent the else (pylint R1705) |
 | [python_mutable_default](./analyzers/python_mutable_default/python_mutable_default.cue) | Flag mutable default args (`def f(x=[])`) |
 | [python_deprecated_use](./analyzers/python_deprecated_use/python_deprecated_use.cue) | Flag calls to `@deprecated`-decorated functions (fact passing) |
 | [python_taint](./analyzers/python_taint/python_taint.cue)                              | Track taint from `input()` through assignments to `eval`/`exec`/`system` (fact passing + fixpoint propagation) |
@@ -63,6 +67,7 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 |---|---|
 | [rust_needless_bool](./analyzers/rust_needless_bool/rust_needless_bool.cue) ✏️ | `if cond { true } else { false }` → `cond`; `if cond { false } else { true }` → `!(cond)` (clippy `needless_bool`) |
 | [rust_println_panic](./analyzers/rust_println_panic/rust_println_panic.cue) ✏️ | Drop redundant `println!()` immediately before `panic!()` |
+| [rust_println_redundant_format](./analyzers/rust_println_redundant_format/rust_println_redundant_format.cue) ✏️ | `println!("{}", "hello")` → `println!("hello")` |
 | [rust_dbg_macro](./analyzers/rust_dbg_macro/rust_dbg_macro.cue) ✏️             | Flag committed `dbg!()` invocations and rewrite `dbg!(expr)` to `expr` |
 | [rust_deprecated_use](./analyzers/rust_deprecated_use/rust_deprecated_use.cue) | Flag calls to `#[deprecated]` functions (fact passing) |
 | [rust_taint](./analyzers/rust_taint/rust_taint.cue)                            | Track taint from `env::var()` through let bindings to `Command::new` (fact passing + fixpoint) |
@@ -74,6 +79,8 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [js_object_assign_spread](./analyzers/js_object_assign_spread/js_object_assign_spread.cue) ✏️ | `Object.assign({}, x)` → `{...x}` |
 | [js_array_concat_spread](./analyzers/js_array_concat_spread/js_array_concat_spread.cue) ✏️   | `[].concat(x)` → `[...x]` |
 | [js_template_no_subst](./analyzers/js_template_no_subst/js_template_no_subst.cue) ✏️         | `` `abc` `` → `'abc'` when no interpolation |
+| [js_double_equals](./analyzers/js_double_equals/js_double_equals.cue) ✏️                     | `==` / `!=` → `===` / `!==` (no implicit type coercion) |
+| [js_var_to_let](./analyzers/js_var_to_let/js_var_to_let.cue) ✏️                              | `var x` → `let x` (block-scoped, no hoisting) |
 | [js_empty_promise](./analyzers/js_empty_promise/js_empty_promise.cue)                        | Flag `new Promise(() => {})` with empty executor |
 | [js_taint](./analyzers/js_taint/js_taint.cue)                                                | Track taint from `req.query` / `req.body` / `req.params` to `eval` / `Function` (fact passing + fixpoint) |
 
@@ -82,6 +89,7 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | Path | What it does |
 |---|---|
 | [ts_array_type_style](./analyzers/ts_array_type_style/ts_array_type_style.cue) ✏️ | `Array<T>` → `T[]` |
+| [ts_any_type](./analyzers/ts_any_type/ts_any_type.cue)                            | Flag `: any` annotations (defeat TypeScript's type checking) |
 
 **YAML**
 
@@ -95,6 +103,68 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | Path | What it does |
 |---|---|
 | [bash_eval_use](./analyzers/bash_eval_use/bash_eval_use.cue) | Flag `eval` invocations (code-injection hazard) |
+
+**C**
+
+| Path | What it does |
+|---|---|
+| [c_gets_unsafe](./analyzers/c_gets_unsafe/c_gets_unsafe.cue) | Flag `gets()` (CWE-242, removed in C11) — use `fgets()` |
+
+**C++**
+
+| Path | What it does |
+|---|---|
+| [cpp_using_namespace_std](./analyzers/cpp_using_namespace_std/cpp_using_namespace_std.cue) | Flag `using namespace std;` (pollutes the global namespace) |
+
+**Java**
+
+| Path | What it does |
+|---|---|
+| [java_string_equals_literal](./analyzers/java_string_equals_literal/java_string_equals_literal.cue) ✏️ | `x.equals("foo")` → `"foo".equals(x)` (NPE-safe) |
+| [java_finalizer](./analyzers/java_finalizer/java_finalizer.cue) | Flag `protected void finalize()` overrides (deprecated since Java 9) |
+
+**Swift**
+
+| Path | What it does |
+|---|---|
+| [swift_force_unwrap](./analyzers/swift_force_unwrap/swift_force_unwrap.cue) | Flag `x!` force-unwrap operator (crashes on nil) |
+
+**Ruby**
+
+| Path | What it does |
+|---|---|
+| [ruby_unless_else](./analyzers/ruby_unless_else/ruby_unless_else.cue) | Flag `unless ... else ... end` — invert to `if` and swap branches |
+
+**PHP**
+
+| Path | What it does |
+|---|---|
+| [php_loose_equality](./analyzers/php_loose_equality/php_loose_equality.cue) ✏️ | `==` / `!=` → `===` / `!==` (no type coercion) |
+
+**SQL**
+
+| Path | What it does |
+|---|---|
+| [sql_select_star](./analyzers/sql_select_star/sql_select_star.cue) | Flag `SELECT *` (fragile under schema changes) |
+
+**Dockerfile**
+
+| Path | What it does |
+|---|---|
+| [dockerfile_latest_tag](./analyzers/dockerfile_latest_tag/dockerfile_latest_tag.cue) | Flag `FROM image:latest` and implicit-latest `FROM image` |
+| [dockerfile_apt_no_recommends](./analyzers/dockerfile_apt_no_recommends/dockerfile_apt_no_recommends.cue) | Flag `apt-get install` without `--no-install-recommends` |
+
+**HTML**
+
+| Path | What it does |
+|---|---|
+| [html_deprecated_tags](./analyzers/html_deprecated_tags/html_deprecated_tags.cue) | Flag `<center>`, `<font>`, `<marquee>`, `<blink>`, `<strike>`, `<big>`, `<tt>` |
+
+**CSS**
+
+| Path | What it does |
+|---|---|
+| [css_zero_unit](./analyzers/css_zero_unit/css_zero_unit.cue) ✏️ | Drop unit on zero (`0px` → `0`) — the unit is meaningless |
 
 ## Use
 

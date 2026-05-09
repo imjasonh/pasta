@@ -13,10 +13,10 @@ class Good:
 
 
 class Bad:
-    def no_self():  # want `method .no_self. is missing .self.`
+    def no_self():  # want "method `no_self` is missing `self`"
         return 1
 
-    def wrong_name(other):  # want `method .wrong_name. is missing .self.`
+    def wrong_name(other):  # want "method `wrong_name` is missing `self`"
         return other
 
 

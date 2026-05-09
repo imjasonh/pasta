@@ -1,7 +1,17 @@
-enabled: true      # want `non-canonical boolean; use .true.`
-debug: true       # want `non-canonical boolean; use .true.`
-verbose: true       # want `non-canonical boolean; use .true.`
-disabled: false      # want `non-canonical boolean; use .false.`
-deprecated: false   # want `non-canonical boolean; use .false.`
+enabled: true # want "non-canonical boolean; use `true`"
+debug: true # want "non-canonical boolean; use `true`"
+verbose: true # want "non-canonical boolean; use `true`"
+disabled: false # want "non-canonical boolean; use `false`"
+deprecated: false # want "non-canonical boolean; use `false`"
 ok: true
 ok2: false
+
+scalar: ["a", true, false, "b"] # want "non-canonical boolean; use `true`" # want "non-canonical boolean; use `false`"
+
+# `on:` as a key is valid YAML (GitHub Actions uses it for trigger
+# definitions). Keys must NOT be flagged — only values.
+on:
+  push:
+    branches: [main]
+  yes:
+    nested: true

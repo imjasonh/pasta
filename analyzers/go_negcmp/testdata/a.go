@@ -1,14 +1,14 @@
 package a
 
 func eq(a, b int) bool {
-	if !(a == b) { // want "negated comparison can be simplified to .!=."
+	if !(a == b) { // want "negated comparison can be simplified to `!=`"
 		return false
 	}
 	return true
 }
 
 func neq(a, b int) bool {
-	if !(a != b) { // want "negated comparison can be simplified to .==."
+	if !(a != b) { // want "negated comparison can be simplified to `==`"
 		return false
 	}
 	return true
@@ -31,8 +31,8 @@ func plain(a, b int) bool {
 }
 
 func mixedOps(a, b int) bool {
-	x := !(a == b) // want "negated comparison can be simplified to .!=."
-	y := !(a != b) // want "negated comparison can be simplified to .==."
+	x := !(a == b) // want "negated comparison can be simplified to `!=`"
+	y := !(a != b) // want "negated comparison can be simplified to `==`"
 	_ = x
 	_ = y
 	return false
@@ -40,5 +40,5 @@ func mixedOps(a, b int) bool {
 
 // Comments inside the parens are preserved by the surgical rewrite.
 func keepsComments(a, b int) bool {
-	return !( /* leading */ a /* mid */ == b /* trailing */) // want "negated comparison can be simplified to .!=."
+	return !( /* leading */ a /* mid */ == b /* trailing */) // want "negated comparison can be simplified to `!=`"
 }

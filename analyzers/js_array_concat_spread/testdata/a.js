@@ -1,4 +1,4 @@
-const a = [].concat(items); // want `\[\].concat\(x\) can be written as \[\.\.\.x\]`
+const a = [].concat(items); // want `[].concat(x) can be written as [...x]`
 
 const b = [1, 2].concat(more); // OK: not empty literal
 

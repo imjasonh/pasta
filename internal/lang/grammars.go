@@ -24,6 +24,16 @@ var Grammars = map[string]func() *gts.Language{
 	"yaml":       grammars.YamlLanguage,
 	"bash":       grammars.BashLanguage,
 	"json":       grammars.JsonLanguage,
+	"c":          grammars.CLanguage,
+	"cpp":        grammars.CppLanguage,
+	"css":        grammars.CssLanguage,
+	"dockerfile": grammars.DockerfileLanguage,
+	"html":       grammars.HtmlLanguage,
+	"java":       grammars.JavaLanguage,
+	"php":        grammars.PhpLanguage,
+	"ruby":       grammars.RubyLanguage,
+	"sql":        grammars.SqlLanguage,
+	"swift":      grammars.SwiftLanguage,
 }
 
 // grammarNames returns the registered names for error messages.

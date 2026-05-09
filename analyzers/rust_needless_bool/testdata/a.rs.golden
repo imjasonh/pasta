@@ -3,7 +3,7 @@ fn identity(x: bool) -> bool {
 }
 
 fn negate(x: bool) -> bool {
-    !(x) // want `this if-expression can be replaced by .!\(condition\).`
+    !(x) // want "this if-expression can be replaced by `!(condition)`"
 }
 
 fn compound(x: bool, y: bool) -> bool {

@@ -1,7 +1,7 @@
 package a
 
 func f() {
-	panic("") // want `panic\(""\) gives no information`
+	panic("") // want `panic("") gives no information`
 }
 
 func g() {

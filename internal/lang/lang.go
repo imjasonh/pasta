@@ -49,7 +49,7 @@ func init() {
 func loadEmbedded() (map[string]Language, error) {
 	embeddedFS := loader.EmbeddedFS()
 	out := map[string]Language{}
-	err := fs.WalkDir(embeddedFS, "cuemod/lang", func(p string, d fs.DirEntry, err error) error {
+	if err := fs.WalkDir(embeddedFS, "cuemod/lang", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -72,8 +72,7 @@ func loadEmbedded() (map[string]Language, error) {
 			GetLanguage:  gl,
 		}
 		return nil
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 	if len(out) == 0 {

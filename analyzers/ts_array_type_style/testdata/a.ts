@@ -1,4 +1,4 @@
-function f(xs: Array<number>): number { // want `Array<T> can be written as T\[\]`
+function f(xs: Array<number>): number { // want `Array<T> can be written as T[]`
     return xs[0];
 }
 
@@ -6,7 +6,7 @@ function g(xs: number[]): number { // OK
     return xs[0];
 }
 
-function h(xs: Array<string>): string { // want `Array<T> can be written as T\[\]`
+function h(xs: Array<string>): string { // want `Array<T> can be written as T[]`
     return xs.join(",");
 }
 

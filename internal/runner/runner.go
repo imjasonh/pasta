@@ -171,17 +171,36 @@ func TestDir(ctx context.Context, ruleDir string) (TestReport, error) {
 }
 
 // wantRe matches a `want` directive in a comment of any common style.
-// An optional `:+N`, `:-N`, or `:N` between `want` and the regex shifts
-// the expected diagnostic line — `// want:+1 "..."` says "the diag is
-// expected on the next line", which lets test data keep want markers
-// off the line being rewritten.
+// An optional `:+N`, `:-N`, or `:N` between `want` and the substring
+// shifts the expected diagnostic line — `// want:+1 "..."` says "the
+// diag is expected on the next line", which lets test data keep want
+// markers off the line being rewritten.
 //
-//	// want "regex"          // want `regex`
-//	# want "regex"           # want `regex`
-//	-- want `regex`           (SQL/Lua)
-//	// want:+1 "regex"        — diagnostic expected on the next line
-//	// want:-1 "regex"        — diagnostic expected on the previous line
-var wantRe = regexp.MustCompile("(?://|#|--)\\s*want(?::([+\\-]?\\d+))?\\s+[`\"]([^`\"]+)[`\"]")
+// The content between the delimiters is matched as a LITERAL
+// substring (not a regex). Pick the delimiter — `"..."` or `\`...\“
+// — based on which character (if either) you need to appear literally
+// inside the want text.
+//
+//	// want "fragment of message"
+//	# want "fragment"
+//	-- want "fragment"             (SQL/Lua)
+//	// want:+1 "fragment"          — diagnostic expected on the next line
+//	// want:-1 "fragment"          — diagnostic expected on the previous line
+//
+// Comment leaders we recognize as want-marker prefixes. Each is
+// matched as a literal string before optional whitespace + `want`.
+//
+//	//, #, --                — line comments (Go/C/JS/Python/Ruby/SQL/Lua)
+//	/*                       — block-comment start (CSS, C/Java/JS block style)
+//	<!--                     — HTML/XML comment start
+//
+// We only need the LEAD-IN; the trailing `*/` or `-->` comes after
+// the want body and isn't consumed here.
+//
+// RE2 doesn't support backreferences, so the body is matched as
+// either a backtick-delimited or double-quote-delimited literal —
+// pick whichever delimiter (if any) you need to appear inside.
+var wantRe = regexp.MustCompile("(?://|#|--|/\\*|<!--)\\s*want(?::([+\\-]?\\d+))?\\s+(?:`([^`]*)`|\"([^\"]*)\")")
 
 // checkDiagnostics returns "" on success, or a multi-line failure
 // message describing missing/extra diagnostics.
@@ -208,24 +227,19 @@ func checkDiagnostics(src []byte, diags []effect.Diagnostic) string {
 		g := got[ln]
 		matched := make([]bool, len(g))
 		for _, want := range w {
-			re, err := regexp.Compile(want)
-			if err != nil {
-				msgs = append(msgs, fmt.Sprintf("line %d: invalid want regex %q: %v", ln, want, err))
-				continue
-			}
 			ok := false
 			for i, d := range g {
 				if matched[i] {
 					continue
 				}
-				if re.MatchString(d.Message) {
+				if strings.Contains(d.Message, want) {
 					matched[i] = true
 					ok = true
 					break
 				}
 			}
 			if !ok {
-				msgs = append(msgs, fmt.Sprintf("line %d: no diagnostic matched %q; got %v", ln, want, msgList(g)))
+				msgs = append(msgs, fmt.Sprintf("line %d: no diagnostic contained %q; got %v", ln, want, msgList(g)))
 			}
 		}
 		for i, m := range matched {
@@ -241,8 +255,8 @@ func extractWantMarkers(src []byte) map[int][]string {
 	out := map[int][]string{}
 	for i, line := range strings.Split(string(src), "\n") {
 		for _, m := range wantRe.FindAllStringSubmatch(line, -1) {
-			// m[1] is the optional offset (e.g. "+1", "-2", "5"); m[2]
-			// is the regex.
+			// m[1] = optional offset; m[2] = backtick-delimited content
+			// (empty if quote form); m[3] = quote-delimited content.
 			line := i + 1
 			if m[1] != "" {
 				off, err := parseOffset(m[1])
@@ -250,7 +264,11 @@ func extractWantMarkers(src []byte) map[int][]string {
 					line += off
 				}
 			}
-			out[line] = append(out[line], m[2])
+			content := m[2]
+			if content == "" {
+				content = m[3]
+			}
+			out[line] = append(out[line], content)
 		}
 	}
 	return out

@@ -3,7 +3,7 @@ package a
 import "errors"
 
 func f(err error) bool {
-	// want:+1 `errors.Is\(x, nil\) can be simplified to x == nil`
+	// want:+1 `errors.Is(x, nil) can be simplified to x == nil`
 	if errors.Is(err, nil) {
 		return true
 	}

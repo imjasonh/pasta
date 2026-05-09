@@ -1,0 +1,14 @@
+class Foo:                  # want `base is redundant`
+    pass
+
+
+class Bar:                          # OK — already implicit
+    pass
+
+
+class Baz(Bar):                     # OK — real superclass
+    pass
+
+
+class Qux(object, metaclass=type):  # OK — also has metaclass kwarg, multi-arg
+    pass

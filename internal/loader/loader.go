@@ -281,10 +281,9 @@ language: version: "v0.13.0"
 // vendorRemoteModules reads dir/pasta.cue + dir/pasta.lock and copies
 // each cached module's files into overlay under
 // <dir>/cue.mod/pkg/<modulePath>/. No network access — fetching
-// happens out of band via `pasta sync`.
-//
-// remoteFetcher is package-level so tests can swap in a fake
-// (see internal/loader/remote_test.go).
+// happens out of band via `pasta sync`. The fetcher is obtained from
+// newDefaultFetcher (a package var) so tests can swap in a fake
+// without going through DefaultCacheDir.
 func vendorRemoteModules(dir string, overlay map[string]load.Source) error {
 	manifest, ok, err := remote.LoadManifest(dir)
 	if err != nil {

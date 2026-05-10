@@ -73,13 +73,18 @@ Recipe: schema.#Analyzer & {
 	if err := os.WriteFile(filepath.Join(userDir, remote.ManifestFile), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lf := remote.Lockfile{Version: 1, Modules: map[string]remote.LockedModule{
-		"example.com/alice/rules": {Version: "v1.0.0", Commit: commit, Hash: "sha256:test"},
+	// Compute the hash the loader will demand on every load; the
+	// lockfile commits to it so a tampered cache fails closed.
+	hash, err := remote.HashTree(remoteDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf := remote.Lockfile{Modules: map[string]remote.LockedModule{
+		"example.com/alice/rules": {Version: "v1.0.0", Commit: commit, Hash: hash},
 	}}
 	lfBytes, _ := json.MarshalIndent(struct {
-		Version int                            `json:"version"`
 		Modules map[string]remote.LockedModule `json:"modules"`
-	}{lf.Version, lf.Modules}, "", "  ")
+	}{lf.Modules}, "", "  ")
 	if err := os.WriteFile(filepath.Join(userDir, remote.LockFile), lfBytes, 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -161,7 +161,13 @@ func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, []s
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		if rulesDirFlag != "" {
-			fmt.Fprintf(os.Stderr, "rules directory %q: %v\n", dir, err)
+			// os.Stat already includes the path in its error string
+			// ("stat /tmp/foo: no such file..."), so don't double up.
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "rules directory: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "rules directory %q is not a directory\n", dir)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "no rules to run: pass a .cue rule file or create a ./%s/ directory (or use -rules <dir>)\n", DefaultRulesDir)
 		}
@@ -277,8 +283,10 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 // reach out. Subsequent `pasta` runs are offline as long as the lock
 // matches the manifest and the cache still has the locked commit.
 func runSync(args []string) int {
+	defaulted := false
 	if len(args) == 0 {
 		args = []string{DefaultRulesDir}
+		defaulted = true
 	}
 	cacheDir, err := remote.DefaultCacheDir()
 	if err != nil {
@@ -288,6 +296,19 @@ func runSync(args []string) int {
 	f := &remote.GitFetcher{CacheDir: cacheDir}
 	exit := 0
 	for _, dir := range args {
+		// Distinguish "no rule directory" from "rule directory with
+		// no manifest". The first is a misconfiguration when
+		// explicit; a benign no-op when defaulted (so plain
+		// `pasta sync` from any project doesn't fail).
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			if defaulted {
+				fmt.Fprintf(os.Stderr, "nothing to sync (./%s/ not present)\n", DefaultRulesDir)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "%s: rule directory not found\n", dir)
+			exit = 2
+			continue
+		}
 		m, ok, err := remote.LoadManifest(dir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", dir, err)

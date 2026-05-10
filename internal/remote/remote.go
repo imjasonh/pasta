@@ -29,6 +29,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -61,8 +62,11 @@ type Manifest struct {
 // Lockfile records the resolved commit SHA for every module in the
 // manifest. It's read alongside the manifest at load time and written
 // by `pasta sync`.
+//
+// There's no schema-version field: this is v1. If a future version
+// needs incompatible semantics, it'll add a `version` field then and
+// treat its absence as v1.
 type Lockfile struct {
-	Version int                     `json:"version"`
 	Modules map[string]LockedModule `json:"modules"`
 }
 
@@ -76,8 +80,9 @@ type LockedModule struct {
 	// cannot retroactively change what we use.
 	Commit string `json:"commit"`
 	// Hash is sha256 over the module's tree (sorted file paths +
-	// contents). Lets `pasta sync -verify` detect tampering of cached
-	// files.
+	// contents). Verified on cache reuse during sync and on every
+	// load — a mismatch means the cache was tampered with or
+	// corrupted, and the user is told to re-run `pasta sync`.
 	Hash string `json:"hash"`
 }
 
@@ -136,11 +141,19 @@ func validateModulePath(p string) error {
 	if strings.ContainsAny(p, " \t\r\n") {
 		return fmt.Errorf("module path %q contains whitespace", p)
 	}
-	if strings.Contains(p, "..") {
-		return fmt.Errorf("module path %q must not contain ..", p)
-	}
 	if strings.HasPrefix(p, "/") || filepath.IsAbs(p) {
 		return fmt.Errorf("module path %q must be relative (no leading /)", p)
+	}
+	// Reject path-traversal segments. A substring check would
+	// over-reject legitimate names like "foo..bar"; we only care
+	// about whole segments equal to "." or "..".
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" {
+			return fmt.Errorf("module path %q has an empty segment", p)
+		}
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("module path %q must not contain . or .. segments", p)
+		}
 	}
 	// Require at least one slash so we have something that looks like
 	// "<host>/<path>". This rejects bare names like "foo".
@@ -173,22 +186,18 @@ func LoadLockfile(dir string) (*Lockfile, bool, error) {
 }
 
 // WriteLockfile marshals lf and writes it to dir/pasta.lock with a
-// trailing newline. Modules are emitted in sorted key order so the
-// file is stable across runs and friendly to diffs.
+// trailing newline. Modules are emitted in sorted key order (by
+// encoding/json's map handling) so the file is stable across runs
+// and friendly to diffs.
 func WriteLockfile(dir string, lf *Lockfile) error {
 	path := filepath.Join(dir, LockFile)
-	// Re-encode through a sorted intermediate so output is
-	// deterministic — encoding/json already sorts maps but we want a
-	// known top-level field order too.
-	type out struct {
-		Version int                     `json:"version"`
+	mods := lf.Modules
+	if mods == nil {
+		mods = map[string]LockedModule{}
+	}
+	data, err := json.MarshalIndent(struct {
 		Modules map[string]LockedModule `json:"modules"`
-	}
-	o := out{Version: 1, Modules: lf.Modules}
-	if o.Modules == nil {
-		o.Modules = map[string]LockedModule{}
-	}
-	data, err := json.MarshalIndent(o, "", "  ")
+	}{mods}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal lockfile: %w", err)
 	}
@@ -289,8 +298,11 @@ func (g *GitFetcher) FetchCommit(modulePath, commit string) (string, error) {
 	if err := os.Rename(tmp, target); err != nil {
 		os.RemoveAll(tmp)
 		// Race: another process may have populated the cache between
-		// our Stat above and now. If the target now exists, prefer
-		// its contents.
+		// our Stat above and now. On Linux, os.Rename refuses to
+		// replace an existing non-empty directory (ENOTEMPTY) — the
+		// loser of the race lands here. macOS / Windows behave the
+		// same way for non-empty dirs. Either way: if the target
+		// exists now, the winner's contents are valid; use them.
 		if _, statErr := os.Stat(target); statErr == nil {
 			return target, nil
 		}
@@ -385,11 +397,11 @@ func DefaultCacheDir() (string, error) {
 // relative paths followed by per-file sha256 hex digests, fed back
 // through sha256. Stable across machines (paths are forward-slash
 // normalized) and detects any change to file content or layout.
+//
+// Files are streamed through sha256 rather than read into memory so
+// embedded fixtures don't blow up the heap.
 func HashTree(dir string) (string, error) {
-	type entry struct {
-		path string
-		hash string
-	}
+	type entry struct{ path, hash string }
 	var entries []entry
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -402,13 +414,11 @@ func HashTree(dir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		rel = filepath.ToSlash(rel)
-		data, err := os.ReadFile(p)
+		sum, err := hashFile(p)
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(data)
-		entries = append(entries, entry{path: rel, hash: hex.EncodeToString(sum[:])})
+		entries = append(entries, entry{path: filepath.ToSlash(rel), hash: sum})
 		return nil
 	})
 	if err != nil {
@@ -420,6 +430,20 @@ func HashTree(dir string) (string, error) {
 		fmt.Fprintf(h, "%s %s\n", e.hash, e.path)
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashFile streams f through sha256 and returns the hex digest.
+func hashFile(p string) (string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // CheckFlat scans dir for nested pasta.cue files declaring further
@@ -476,23 +500,35 @@ func Sync(dir string, m *Manifest, f Fetcher) (*Lockfile, error) {
 		return nil, err
 	}
 	if existing == nil {
-		existing = &Lockfile{Version: 1, Modules: map[string]LockedModule{}}
+		existing = &Lockfile{Modules: map[string]LockedModule{}}
 	}
-	out := &Lockfile{Version: 1, Modules: map[string]LockedModule{}}
+	out := &Lockfile{Modules: map[string]LockedModule{}}
 	for path, ver := range m.Modules {
 		// If the lockfile already records this exact version and the
-		// cache has its commit, reuse without going to the network.
+		// cache has its commit, reuse — but verify the on-disk hash
+		// before trusting it. A mismatch means the cache was
+		// tampered with or corrupted; we refuse to silently
+		// overwrite it (auto-recovery could mask an attack) and
+		// tell the user to clear the cache entry.
 		if prev, ok := existing.Modules[path]; ok && prev.Version == ver && prev.Commit != "" {
-			localDir, ferr := f.FetchCommit(path, prev.Commit)
-			if ferr == nil {
+			if localDir, ferr := f.FetchCommit(path, prev.Commit); ferr == nil {
 				if err := CheckFlat(localDir); err != nil {
 					return nil, fmt.Errorf("module %s: %w", path, err)
+				}
+				if prev.Hash != "" {
+					gotHash, err := HashTree(localDir)
+					if err != nil {
+						return nil, fmt.Errorf("hash %s: %w", path, err)
+					}
+					if gotHash != prev.Hash {
+						return nil, fmt.Errorf("module %s@%s: cached files hash to %s but lockfile records %s; remove %s and re-run `pasta sync`",
+							path, prev.Commit, gotHash, prev.Hash, localDir)
+					}
 				}
 				out.Modules[path] = prev
 				continue
 			}
-			// Cache miss with no network — fall through to a fresh
-			// fetch, which will surface a clear error if offline.
+			// Cache miss — fall through to a fresh fetch.
 		}
 		localDir, commit, err := f.Fetch(path, ver)
 		if err != nil {
@@ -517,8 +553,10 @@ func Sync(dir string, m *Manifest, f Fetcher) (*Lockfile, error) {
 // cached contents. Used by the loader to vendor remote modules into
 // the CUE overlay.
 //
-// Errors if any module in m is missing a lock entry (manifest drift)
-// or if its locked commit isn't on disk (run `pasta sync`).
+// Errors if any module in m is missing a lock entry (manifest drift),
+// if its locked commit isn't on disk (run `pasta sync`), or if the
+// cached files no longer hash to the locked digest (cache tampering
+// / corruption — also a `pasta sync` away from healthy).
 func VendorDirs(m *Manifest, lf *Lockfile, f Fetcher) (map[string]string, error) {
 	out := map[string]string{}
 	for path, ver := range m.Modules {
@@ -535,6 +573,18 @@ func VendorDirs(m *Manifest, lf *Lockfile, f Fetcher) (map[string]string, error)
 		dir, err := f.FetchCommit(path, entry.Commit)
 		if err != nil {
 			return nil, fmt.Errorf("module %q@%s not in cache; run `pasta sync`: %w", path, entry.Commit, err)
+		}
+		// Skip verification when no hash is recorded — older
+		// lockfiles (or hand-written ones for tests) may omit it. A
+		// recorded hash that doesn't match is always an error.
+		if entry.Hash != "" {
+			gotHash, err := HashTree(dir)
+			if err != nil {
+				return nil, fmt.Errorf("hash %s: %w", path, err)
+			}
+			if gotHash != entry.Hash {
+				return nil, fmt.Errorf("module %q@%s: cached files hash to %s but lockfile records %s; run `pasta sync` to refetch", path, entry.Commit, gotHash, entry.Hash)
+			}
 		}
 		out[path] = dir
 	}

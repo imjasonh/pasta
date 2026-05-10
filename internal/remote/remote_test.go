@@ -88,7 +88,6 @@ func TestLoadManifestRejectsBadPath(t *testing.T) {
 func TestLockfileRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	in := &Lockfile{
-		Version: 1,
 		Modules: map[string]LockedModule{
 			"github.com/alice/lint-rules": {Version: "v1.2.3", Commit: strings.Repeat("a", 40), Hash: "sha256:deadbeef"},
 		},
@@ -103,7 +102,7 @@ func TestLockfileRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("expected ok=true after write")
 	}
-	if out.Version != 1 || len(out.Modules) != 1 {
+	if len(out.Modules) != 1 {
 		t.Errorf("round-trip mismatch: %+v", out)
 	}
 	got := out.Modules["github.com/alice/lint-rules"]
@@ -186,6 +185,13 @@ func (f *fakeFetcher) Fetch(path, ver string) (string, string, error) {
 func (f *fakeFetcher) FetchCommit(path, commit string) (string, error) {
 	f.calls = append(f.calls, "FetchCommit:"+path+"@"+commit)
 	target := filepath.Join(f.root, filepath.FromSlash(path)+"@"+commit)
+	// Mirror the real fetcher: an existing target dir is the cache
+	// hit — return it without rewriting. This is what makes
+	// tamper-detection tests realistic; without it the fake would
+	// helpfully un-tamper any cached file every time it's called.
+	if _, err := os.Stat(target); err == nil {
+		return target, nil
+	}
 	files, ok := f.files[path+"@"+commit]
 	if !ok {
 		return "", os.ErrNotExist
@@ -296,6 +302,66 @@ func TestSyncReusesCachedEntry(t *testing.T) {
 		if strings.HasPrefix(c, "Fetch:") {
 			t.Errorf("expected no Fetch call on reused entry; got %s", c)
 		}
+	}
+}
+
+func TestSyncRejectsHashMismatch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ManifestFile), []byte(`imports: {"github.com/alice/rules": "v1.0.0"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("c", 40)
+	f := &fakeFetcher{
+		root:      t.TempDir(),
+		resolveFn: func(_, _ string) string { return commit },
+		files: map[string]map[string][]byte{
+			"github.com/alice/rules@" + commit: {"r.cue": []byte("package r\n")},
+		},
+	}
+	m, _, err := LoadManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Sync(dir, m, f); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+	// Tamper with the cached file. The second Sync should refuse
+	// to reuse the stale entry and surface a clear error rather
+	// than silently overwriting it (which could mask an attack).
+	cached := filepath.Join(f.root, "github.com/alice/rules@"+commit, "r.cue")
+	if err := os.WriteFile(cached, []byte("package r // tampered\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Sync(dir, m, f)
+	if err == nil {
+		t.Fatal("expected hash-mismatch error on tampered cache")
+	}
+	if !strings.Contains(err.Error(), "hash") {
+		t.Errorf("expected error to mention hash; got %v", err)
+	}
+}
+
+func TestVendorDirsRejectsHashMismatch(t *testing.T) {
+	served := t.TempDir()
+	if err := os.WriteFile(filepath.Join(served, "r.cue"), []byte("package r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("d", 40)
+	f := &fakeFetcher{
+		root:      t.TempDir(),
+		resolveFn: func(_, _ string) string { return commit },
+		files:     map[string]map[string][]byte{"github.com/alice/rules@" + commit: {"r.cue": []byte("package r\n")}},
+	}
+	m := &Manifest{Modules: map[string]string{"github.com/alice/rules": "v1.0.0"}}
+	lf := &Lockfile{Modules: map[string]LockedModule{
+		"github.com/alice/rules": {Version: "v1.0.0", Commit: commit, Hash: "sha256:wrong"},
+	}}
+	_, err := VendorDirs(m, lf, f)
+	if err == nil {
+		t.Fatal("expected hash-mismatch error")
+	}
+	if !strings.Contains(err.Error(), "hash") {
+		t.Errorf("expected error to mention hash; got %v", err)
 	}
 }
 

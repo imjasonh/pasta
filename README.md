@@ -172,28 +172,36 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 ```
 go install github.com/imjasonh/pasta/cmd/pasta@latest
 
-# Run a rule against one or more sources.
+# Project-style: drop your rules in ./.pasta/ and just run pasta.
+# Rules are loaded from ./.pasta/, sources default to ./...
+mkdir -p .pasta && cp path/to/some-rule.cue .pasta/
+pasta              # report
+pasta -fix         # apply fixes
+
+# Same, but pointing at a different rule directory.
+pasta -rules path/to/rule-dir
+pasta -rules path/to/rule-dir ./...
+pasta -fix -rules path/to/rule-dir file.go
+
+# Single-rule shortcut: first positional arg is a .cue file.
 pasta path/to/rule.cue file.go [file.go ...]
-
-# Run a rule against EVERY source file under a directory, recursively.
-# `./...` is the current dir; `pkg/...` is `pkg/` and below. Files
-# whose extension doesn't map to a registered language are skipped.
-# `.git`, `vendor`, and `node_modules` are skipped by default; use
-# `-skip` with a comma-separated list to add more (e.g. `dist,build`).
 pasta path/to/rule.cue ./...
-pasta -skip dist,build path/to/rule.cue ./...
-
-# Apply suggested fixes — rewrites each source file in place.
-# Files whose fixed bytes match the input are left untouched (mtime
-# unchanged), so re-running on a clean tree is a no-op.
-pasta -fix path/to/rule.cue file.go
 pasta -fix path/to/rule.cue ./...
 
-# Run all rules in a directory against its testdata/.
+# `./...` recurses from the current dir; `pkg/...` is `pkg/` and below.
+# Files whose extension doesn't map to a registered language are skipped.
+# `.git`, `vendor`, `node_modules`, and `.pasta` are skipped by default;
+# use `-skip` with a comma-separated list to add more (e.g. `dist,build`).
+pasta -skip dist,build ./...
+
+# Run rules in a directory against its testdata/. Defaults to ./.pasta/.
+pasta test
 pasta test path/to/rule-dir
 
 # Fetch any remote rule modules declared in <rule-dir>/pasta.cue and
 # write a pasta.lock with resolved commit SHAs (network access).
+# Defaults to ./.pasta/.
+pasta sync
 pasta sync path/to/rule-dir
 ```
 
@@ -241,17 +249,17 @@ with realistic multi-file inputs.
 
 Rule directories can pull in rule modules published in other
 repositories. Declare them in a `pasta.cue` manifest at the rule
-directory root:
+directory root (typically `./.pasta/pasta.cue`):
 
 ```cue
-// my-rule/pasta.cue
+// .pasta/pasta.cue
 imports: {
     "github.com/alice/lint-rules": "v1.2.3"
 }
 ```
 
-then run `pasta sync my-rule/` to fetch the module and write
-`my-rule/pasta.lock` pinning the resolved commit SHA. From any rule
+then run `pasta sync` to fetch the module and write
+`./.pasta/pasta.lock` pinning the resolved commit SHA. From any rule
 in the directory, import the module as a normal CUE package:
 
 ```cue

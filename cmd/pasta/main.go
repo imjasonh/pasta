@@ -2,15 +2,22 @@
 //
 // Usage:
 //
-//	pasta [-fix] [-skip <dirs>] <rule.cue> <source> [<source>...]
-//	pasta test <rule-dir> [<rule-dir>...]            run rules on their testdata/
-//	pasta sync <rule-dir>                            fetch remote imports declared in <rule-dir>/pasta.cue
+//	pasta [-fix] [-skip <dirs>] [-rules <dir>] [<source>...]
+//	pasta [-fix] <rule.cue> <source> [<source>...]   single-rule form
+//	pasta test [<rule-dir>...]                       run rules on their testdata/
+//	pasta sync [<rule-dir>]                          fetch remote imports declared in <rule-dir>/pasta.cue
+//
+// With no positional rule argument, pasta loads every rule in
+// `./.pasta/` (override with `-rules`) and analyzes the given sources.
+// When no sources are given either, sources default to `./...`. The
+// single-rule form is triggered when the first positional argument is
+// an existing `.cue` file.
 //
 // A source argument ending in `/...` (or the literal `./...`) is
 // expanded to every file under that directory whose extension maps
 // to a registered language — Go-style "all packages below here".
-// During expansion, directories named `.git`, `vendor`, or
-// `node_modules` are skipped by default; pass `-skip` with a
+// During expansion, directories named `.git`, `vendor`, `node_modules`,
+// or `.pasta` are skipped by default; pass `-skip` with a
 // comma-separated list to add more.
 //
 // The source file's extension determines the tree-sitter language; see
@@ -53,25 +60,28 @@ func main() {
 	os.Exit(runFix(os.Args[1:]))
 }
 
+// DefaultRulesDir is the conventional location for a project's pasta
+// rule directory. `pasta`, `pasta sync`, and `pasta test` all default
+// to this dir when no rule directory is specified on the command line.
+const DefaultRulesDir = ".pasta"
+
 func runFix(args []string) int {
 	fs := flag.NewFlagSet("pasta", flag.ExitOnError)
 	fix := fs.Bool("fix", false, "apply suggested fixes by rewriting each source file in place")
-	skip := fs.String("skip", "", "comma-separated directory basenames to skip during ./... expansion (in addition to defaults: .git, vendor, node_modules)")
+	skip := fs.String("skip", "", "comma-separated directory basenames to skip during ./... expansion (in addition to defaults: .git, vendor, node_modules, .pasta)")
+	rulesDir := fs.String("rules", "", "directory of CUE rule files to load (default: ./"+DefaultRulesDir+")")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "usage: pasta [-fix] [-skip <dirs>] <rule.cue> <source> [<source>...]")
-		fmt.Fprintln(os.Stderr, "       pasta test <rule-dir> [<rule-dir>...]")
-		return 2
-	}
-	rulePath := fs.Arg(0)
-	rawSources := fs.Args()[1:]
 
-	a, err := runner.LoadRule(rulePath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load %s: %v\n", rulePath, err)
-		return 1
+	analyzers, rawSources, code := selectRules(*rulesDir, fs.Args())
+	if code != 0 {
+		return code
+	}
+	if len(rawSources) == 0 {
+		// No sources given: default to "./..." so `pasta` from a
+		// project root with a .pasta/ dir Just Works.
+		rawSources = []string{"./..."}
 	}
 
 	expanded, err := expandSources(rawSources, parseSkipDirs(*skip))
@@ -95,7 +105,7 @@ func runFix(args []string) int {
 		return exit
 	}
 
-	results, err := runner.RunGroup(context.Background(), specs, []*dsl.Analyzer{a}, *fix)
+	results, err := runner.RunGroup(context.Background(), specs, analyzers, *fix)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
@@ -119,6 +129,50 @@ func runFix(args []string) int {
 		}
 	}
 	return exit
+}
+
+// selectRules picks between the directory form (`pasta [source...]`,
+// rules loaded from -rules or ./.pasta/) and the legacy single-file
+// form (`pasta rule.cue source...`, triggered when the first
+// positional argument is an existing .cue file).
+//
+// Returns the loaded analyzers, the remaining positional args to be
+// treated as sources, and a process exit code (0 = ok). Errors are
+// printed to stderr.
+func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, []string, int) {
+	// Single-rule shortcut: first positional is an existing .cue
+	// file. -rules wins if explicitly set, so users who want to mix
+	// can still force directory mode.
+	if rulesDirFlag == "" && len(positional) > 0 && strings.HasSuffix(positional[0], ".cue") {
+		if info, err := os.Stat(positional[0]); err == nil && info.Mode().IsRegular() {
+			a, err := runner.LoadRule(positional[0])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "load %s: %v\n", positional[0], err)
+				return nil, nil, 1
+			}
+			return []*dsl.Analyzer{a}, positional[1:], 0
+		}
+	}
+
+	dir := rulesDirFlag
+	if dir == "" {
+		dir = DefaultRulesDir
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		if rulesDirFlag != "" {
+			fmt.Fprintf(os.Stderr, "rules directory %q: %v\n", dir, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "no rules to run: pass a .cue rule file or create a ./%s/ directory (or use -rules <dir>)\n", DefaultRulesDir)
+		}
+		return nil, nil, 2
+	}
+	analyzers, err := runner.LoadRules(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load %s: %v\n", dir, err)
+		return nil, nil, 1
+	}
+	return analyzers, positional, 0
 }
 
 // expandSources turns CLI source arguments into concrete file paths.
@@ -159,12 +213,14 @@ func expandSources(args []string, skip map[string]bool) ([]string, error) {
 
 // defaultSkipDirs are directory basenames pasta won't descend into
 // during `./...` expansion. These hold third-party / vendored / VCS
-// data that almost no analyzer wants to lint, and walking them turns
-// `pasta -fix rule.cue ./...` into an unintended whole-tree edit.
+// data, or rule definitions / their testdata, that almost no
+// analyzer wants to lint — walking them turns `pasta -fix ./...`
+// into an unintended whole-tree edit.
 var defaultSkipDirs = map[string]bool{
 	".git":         true,
 	"vendor":       true,
 	"node_modules": true,
+	".pasta":       true,
 }
 
 // parseSkipDirs returns the union of defaultSkipDirs and the
@@ -221,9 +277,8 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 // reach out. Subsequent `pasta` runs are offline as long as the lock
 // matches the manifest and the cache still has the locked commit.
 func runSync(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: pasta sync <rule-dir> [<rule-dir>...]")
-		return 2
+	if len(args) == 0 {
+		args = []string{DefaultRulesDir}
 	}
 	cacheDir, err := remote.DefaultCacheDir()
 	if err != nil {
@@ -280,9 +335,8 @@ func shortSHA(s string) string {
 }
 
 func runTest(args []string) int {
-	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: pasta test <rule-dir> [<rule-dir>...]")
-		return 2
+	if len(args) == 0 {
+		args = []string{DefaultRulesDir}
 	}
 	exit := 0
 	for _, dir := range args {

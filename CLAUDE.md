@@ -160,10 +160,23 @@ and the runner registers them at startup.
   unique names where bleed would corrupt the test; production
   precision needs scope-aware fact keys (see future-work.md).
 
+## The `.pasta/` convention
+
+Projects keep their rules in `./.pasta/` at the repo root. Bare
+`pasta` / `pasta -fix` / `pasta sync` / `pasta test` all default to
+this directory; pass `-rules <dir>` (or, for sync/test, an explicit
+positional dir) to override. `.pasta` is added to the `./...` walk's
+default skip list so the rules and their testdata aren't picked up
+as project sources.
+
+The single-rule shortcut still works: when the first positional arg
+is an existing `.cue` file, `pasta rule.cue source...` loads that
+one file as before.
+
 ## Remote imports
 
 A rule directory can declare external rule modules in a `pasta.cue`
-manifest at its root:
+manifest at its root (typically `./.pasta/pasta.cue`):
 
 ```cue
 imports: {
@@ -171,8 +184,8 @@ imports: {
 }
 ```
 
-`pasta sync <rule-dir>` resolves each version to a commit SHA via
-`git ls-remote`, fetches the module into
+`pasta sync` (defaulting to `./.pasta/`) resolves each version to a
+commit SHA via `git ls-remote`, fetches the module into
 `$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and writes a
 `pasta.lock` next to the manifest. Subsequent loads are offline as
 long as the lock matches the manifest and the cache still holds the

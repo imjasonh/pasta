@@ -279,10 +279,25 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 // declared remote module, populates the on-disk cache, and writes
 // pasta.lock with the resolved commit SHAs and content hashes.
 //
-// Network access happens here — `pasta sync` is the one place we
-// reach out. Subsequent `pasta` runs are offline as long as the lock
-// matches the manifest and the cache still has the locked commit.
+// As of implicit sync, plain `pasta` runs already do this on the fly
+// when the lockfile is missing or stale, so `pasta sync` is no longer
+// required for day-to-day use. It survives for two reasons:
+//   - Explicit refresh: re-resolve a moving ref (branch / tag) to its
+//     current commit even when the lockfile already has an entry.
+//   - CI gating via --check: report drift without writing files, so
+//     a CI job can fail the build when a contributor edited the
+//     manifest without committing the regenerated lockfile.
 func runSync(args []string) int {
+	check := false
+	rest := args[:0]
+	for _, a := range args {
+		if a == "--check" || a == "-check" {
+			check = true
+			continue
+		}
+		rest = append(rest, a)
+	}
+	args = rest
 	defaulted := false
 	if len(args) == 0 {
 		args = []string{DefaultRulesDir}
@@ -317,6 +332,29 @@ func runSync(args []string) int {
 		}
 		if !ok || len(m.Modules) == 0 {
 			fmt.Fprintf(os.Stderr, "%s: no remote imports declared\n", dir)
+			continue
+		}
+		if check {
+			// --check is non-destructive: load the lockfile and
+			// compare to the manifest. Exit non-zero on any drift,
+			// don't touch the filesystem.
+			lf, lfOk, lerr := remote.LoadLockfile(dir)
+			if lerr != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", dir, lerr)
+				exit = 1
+				continue
+			}
+			if !lfOk {
+				fmt.Fprintf(os.Stderr, "%s: lockfile missing; run `pasta sync %s`\n", dir, dir)
+				exit = 1
+				continue
+			}
+			if inSync, reason := remote.IsInSync(m, lf); !inSync {
+				fmt.Fprintf(os.Stderr, "%s: out of sync: %s; run `pasta sync %s`\n", dir, reason, dir)
+				exit = 1
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "ok   %s (lockfile up to date)\n", dir)
 			continue
 		}
 		lf, err := remote.Sync(dir, m, f)

@@ -184,13 +184,28 @@ imports: {
 }
 ```
 
-`pasta sync` (defaulting to `./.pasta/`) resolves each version to a
-commit SHA via `git ls-remote`, fetches the module into
-`$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and writes a
-`pasta.lock` next to the manifest. Subsequent loads are offline as
-long as the lock matches the manifest and the cache still holds the
-locked commit (and its content hash still matches; tampering is a
-hard error).
+Sync is implicit on load. When LoadDir sees a manifest, it checks
+`remote.IsInSync(manifest, lockfile)`; if the lockfile is missing
+or out of sync (different version pinned, new entry added, removed
+entry still present) it calls `remote.Sync` to resolve via
+`git ls-remote`, fetch into
+`$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and write a
+fresh `pasta.lock`. The clean-match path is offline.
+
+`pasta sync` is still a top-level command, but it's no longer
+required for day-to-day use:
+
+- `pasta sync [dir]` — eager refresh. Useful when a manifest pins
+  a branch or moving tag and you want the latest commit pulled in
+  now rather than on next run.
+- `pasta sync --check [dir]` — non-destructive verification. Exits
+  non-zero with a reason if the lockfile drifts from the manifest;
+  doesn't write files. CI uses this to fail builds where someone
+  edited the manifest without committing the regenerated lockfile.
+
+Tamper detection (cached files no longer hash to the locked digest)
+remains a hard error on every load — implicit sync doesn't paper
+over it.
 
 Two ways to consume a remote module:
 

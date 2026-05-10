@@ -16,12 +16,25 @@ import (
 // export the test type.
 type fakeFetcher struct {
 	dirs map[string]string // "<modulePath>@<commit>" -> dir
+	// versions optionally maps "<modulePath>@<version>" to a
+	// (dir, commit) pair so the implicit-sync path (which calls
+	// Fetch to resolve a version → commit) can be tested without
+	// hitting git.
+	versions map[string]struct{ dir, commit string }
 }
 
 func (f *fakeFetcher) Fetch(path, ver string) (string, string, error) {
-	// Tests always go through the lockfile path here, so Fetch is
-	// not exercised. Keep an honest stub so misuse fails loudly.
-	return "", "", os.ErrNotExist
+	if f.versions == nil {
+		// Tests that exercise only the lockfile path leave
+		// versions nil; fail loudly if that path is taken
+		// unexpectedly.
+		return "", "", os.ErrNotExist
+	}
+	v, ok := f.versions[path+"@"+ver]
+	if !ok {
+		return "", "", os.ErrNotExist
+	}
+	return v.dir, v.commit, nil
 }
 
 func (f *fakeFetcher) FetchCommit(path, commit string) (string, error) {
@@ -129,24 +142,136 @@ myrule: rules.Recipe & schema.#Analyzer & {
 	}
 }
 
-// TestLoadDirRejectsManifestWithoutLockfile verifies that declaring
-// remote imports without first running `pasta sync` produces a clear
-// error rather than silently ignoring the manifest.
-func TestLoadDirRejectsManifestWithoutLockfile(t *testing.T) {
+// TestLoadDirImplicitlySyncsMissingLockfile verifies that declaring
+// remote imports WITHOUT a lockfile triggers an implicit sync on
+// first run — manifest edits "just work" rather than requiring the
+// user to remember `pasta sync`. After the call, a lockfile should
+// exist on disk pinning the resolved commit.
+func TestLoadDirImplicitlySyncsMissingLockfile(t *testing.T) {
+	remoteDir := stageRemoteModule(t, "rules", "rules.cue", `import "github.com/imjasonh/pasta/schema"
+
+xss: schema.#Analyzer & {
+	name: "xss"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc: "x"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {node: "identifier"}
+		diagnose: {message: "y", severity: "hint"}
+	}
+}
+`)
+	commit := strings.Repeat("a", 40)
+	f := &fakeFetcher{
+		dirs: map[string]string{"example.com/alice/rules@" + commit: remoteDir},
+		// Implicit sync resolves version → commit via Fetch.
+		versions: map[string]struct{ dir, commit string }{
+			"example.com/alice/rules@v1.0.0": {dir: remoteDir, commit: commit},
+		},
+	}
+	t.Cleanup(SetFetcherForTesting(f))
+
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, remote.ManifestFile),
 		[]byte(`imports: {"example.com/alice/rules": "v1.0.0"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "r.cue"), []byte(`package r`+"\n"), 0o644); err != nil {
+
+	res, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v (expected implicit sync to succeed)", err)
+	}
+	if len(res.Analyzers) != 1 {
+		t.Fatalf("expected 1 auto-enrolled analyzer; got %d", len(res.Analyzers))
+	}
+
+	// Lockfile must have been written by the implicit sync.
+	lockPath := filepath.Join(dir, remote.LockFile)
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("expected lockfile at %s after implicit sync; got %v", lockPath, err)
+	}
+}
+
+// TestLoadDirImplicitlySyncsStaleLockfile covers the second
+// implicit-sync trigger: lockfile present but doesn't match the
+// manifest (new entry added). The existing entry stays put, the
+// new one gets resolved + appended.
+func TestLoadDirImplicitlySyncsStaleLockfile(t *testing.T) {
+	mod1 := stageRemoteModule(t, "a", "a.cue", `import "github.com/imjasonh/pasta/schema"
+
+a: schema.#Analyzer & {
+	name: "a"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {name: "r", doc: "x", languages: ["go"], requires: [], provides: [], match: {node: "identifier"}, diagnose: {message: "y", severity: "hint"}}
+}
+`)
+	mod2 := stageRemoteModule(t, "b", "b.cue", `import "github.com/imjasonh/pasta/schema"
+
+b: schema.#Analyzer & {
+	name: "b"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {name: "r", doc: "x", languages: ["go"], requires: [], provides: [], match: {node: "identifier"}, diagnose: {message: "y", severity: "hint"}}
+}
+`)
+	c1 := strings.Repeat("1", 40)
+	c2 := strings.Repeat("2", 40)
+	f := &fakeFetcher{
+		dirs: map[string]string{
+			"example.com/a@" + c1: mod1,
+			"example.com/b@" + c2: mod2,
+		},
+		versions: map[string]struct{ dir, commit string }{
+			"example.com/a@v1": {dir: mod1, commit: c1},
+			"example.com/b@v1": {dir: mod2, commit: c2},
+		},
+	}
+	t.Cleanup(SetFetcherForTesting(f))
+
+	dir := t.TempDir()
+	// Manifest declares both modules.
+	manifest := "imports: {\n\t\"example.com/a\": \"v1\"\n\t\"example.com/b\": \"v1\"\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, remote.ManifestFile), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := LoadDir(dir)
-	if err == nil {
-		t.Fatal("expected error for missing lockfile")
+	// Lockfile only has the first one — stale.
+	h1, err := remote.HashTree(mod1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "pasta sync") {
-		t.Errorf("expected error to suggest `pasta sync`; got %v", err)
+	lf := struct {
+		Modules map[string]remote.LockedModule `json:"modules"`
+	}{Modules: map[string]remote.LockedModule{
+		"example.com/a": {Version: "v1", Commit: c1, Hash: h1},
+	}}
+	b, _ := json.MarshalIndent(lf, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, remote.LockFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(res.Analyzers) != 2 {
+		t.Fatalf("expected 2 auto-enrolled analyzers (a + b); got %d", len(res.Analyzers))
+	}
+
+	// Lockfile should now record both modules.
+	lf2, ok, err := remote.LoadLockfile(dir)
+	if err != nil || !ok {
+		t.Fatalf("LoadLockfile after sync: ok=%v err=%v", ok, err)
+	}
+	if _, hasA := lf2.Modules["example.com/a"]; !hasA {
+		t.Error("post-sync lockfile missing example.com/a")
+	}
+	if _, hasB := lf2.Modules["example.com/b"]; !hasB {
+		t.Error("post-sync lockfile missing example.com/b (the new entry)")
 	}
 }
 

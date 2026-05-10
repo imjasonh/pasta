@@ -258,8 +258,13 @@ imports: {
 }
 ```
 
-then run `pasta sync` to fetch the module and write
-`./.pasta/pasta.lock` pinning the resolved commit SHA.
+The next `pasta` run resolves the version, fetches the module,
+and writes `./.pasta/pasta.lock` pinning the commit SHA — sync is
+implicit. Subsequent runs are offline as long as the lockfile is
+in sync with the manifest. `pasta sync` still exists if you want
+to refresh a moving ref (branch / tag) eagerly, and
+`pasta sync --check` reports drift without writing files for CI
+gating.
 
 **Every top-level analyzer the module exports is auto-enrolled**, so
 listing the module is enough to start running its rules — no

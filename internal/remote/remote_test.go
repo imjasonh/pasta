@@ -387,3 +387,44 @@ func TestVendorDirsMissingFromLock(t *testing.T) {
 		t.Fatal("expected error for module missing from lockfile")
 	}
 }
+
+// TestIsInSync covers the four shapes the loader cares about: nil
+// lockfile, missing entry, version drift, and a stale entry the
+// manifest no longer asks for. A clean match returns (true, "").
+func TestIsInSync(t *testing.T) {
+	m := &Manifest{Modules: map[string]string{"a": "v1", "b": "v2"}}
+	clean := &Lockfile{Modules: map[string]LockedModule{
+		"a": {Version: "v1", Commit: "deadbeef"},
+		"b": {Version: "v2", Commit: "cafef00d"},
+	}}
+
+	cases := []struct {
+		name string
+		lf   *Lockfile
+		want bool
+	}{
+		{"clean", clean, true},
+		{"nil lockfile", nil, false},
+		{"missing entry", &Lockfile{Modules: map[string]LockedModule{
+			"a": {Version: "v1", Commit: "deadbeef"},
+		}}, false},
+		{"version drift", &Lockfile{Modules: map[string]LockedModule{
+			"a": {Version: "v1", Commit: "deadbeef"},
+			"b": {Version: "v3", Commit: "cafef00d"},
+		}}, false},
+		{"extra entry", &Lockfile{Modules: map[string]LockedModule{
+			"a": {Version: "v1", Commit: "deadbeef"},
+			"b": {Version: "v2", Commit: "cafef00d"},
+			"c": {Version: "v1", Commit: "12345678"},
+		}}, false},
+	}
+	for _, tc := range cases {
+		got, reason := IsInSync(m, tc.lf)
+		if got != tc.want {
+			t.Errorf("%s: got=%v want=%v reason=%q", tc.name, got, tc.want, reason)
+		}
+		if !got && reason == "" {
+			t.Errorf("%s: out-of-sync result should include a reason", tc.name)
+		}
+	}
+}

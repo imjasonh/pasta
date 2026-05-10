@@ -549,6 +549,40 @@ func Sync(dir string, m *Manifest, f Fetcher) (*Lockfile, error) {
 	return out, nil
 }
 
+// IsInSync reports whether lf records the exact same set of modules
+// at the exact same versions as m. Returns false (and a reason) when
+// the lockfile is stale, missing entries, or has extras the manifest
+// no longer asks for.
+//
+// This is the gate the loader uses to decide whether to run an
+// implicit Sync before vendoring: if everything matches, the cached
+// commits are still authoritative and no network is needed.
+//
+// Note this only compares manifest-vs-lockfile metadata. It does NOT
+// verify that the cached files still exist on disk or hash to the
+// recorded digest — VendorDirs already does both, so we don't
+// duplicate the work here.
+func IsInSync(m *Manifest, lf *Lockfile) (bool, string) {
+	if lf == nil {
+		return false, "no lockfile"
+	}
+	for path, ver := range m.Modules {
+		entry, ok := lf.Modules[path]
+		if !ok {
+			return false, fmt.Sprintf("manifest declares %q but lockfile has no entry", path)
+		}
+		if entry.Version != ver {
+			return false, fmt.Sprintf("%q: manifest=%s, lockfile=%s", path, ver, entry.Version)
+		}
+	}
+	for path := range lf.Modules {
+		if _, ok := m.Modules[path]; !ok {
+			return false, fmt.Sprintf("lockfile has %q but manifest no longer declares it", path)
+		}
+	}
+	return true, ""
+}
+
 // VendorDirs returns, for each module in lf, the on-disk path to its
 // cached contents. Used by the loader to vendor remote modules into
 // the CUE overlay.

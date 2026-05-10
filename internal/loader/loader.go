@@ -291,9 +291,10 @@ language: version: "v0.13.0"
 		return nil, nil, err
 	}
 
-	// Vendor any remote modules declared in pasta.cue. Resolution
-	// goes through the lockfile + on-disk cache; no fetching here.
-	// Loading errors out cleanly if the user hasn't run `pasta sync`.
+	// Vendor any remote modules declared in pasta.cue. If the
+	// lockfile is missing or stale relative to the manifest,
+	// vendorRemoteModules transparently runs a sync first — manifest
+	// edits don't require a separate `pasta sync` step.
 	remoteDirs, err := vendorRemoteModules(userDir, overlay)
 	if err != nil {
 		return nil, nil, err
@@ -311,10 +312,17 @@ language: version: "v0.13.0"
 // each cached module's files into overlay under
 // <dir>/cue.mod/pkg/<modulePath>/, and returns the modulePath →
 // on-disk cache dir map so the caller can also enroll the modules'
-// analyzers as rules. No network access — fetching happens out of
-// band via `pasta sync`. The fetcher is obtained from
-// newDefaultFetcher (a package var) so tests can swap in a fake
-// without going through DefaultCacheDir.
+// analyzers as rules.
+//
+// Sync is implicit: if the lockfile is missing or stale relative to
+// the manifest, this calls remote.Sync first to resolve versions,
+// fetch new commits, and write the lockfile. That makes manifest
+// edits "just work" on the next run instead of requiring an
+// out-of-band `pasta sync`. An explicit `pasta sync` (and
+// `pasta sync --check`) still exists for warming the cache and CI
+// gating. The fetcher is obtained from newDefaultFetcher (a package
+// var) so tests can swap in a fake without going through
+// DefaultCacheDir.
 func vendorRemoteModules(dir string, overlay map[string]load.Source) (map[string]string, error) {
 	manifest, ok, err := remote.LoadManifest(dir)
 	if err != nil {
@@ -323,17 +331,28 @@ func vendorRemoteModules(dir string, overlay map[string]load.Source) (map[string
 	if !ok || len(manifest.Modules) == 0 {
 		return nil, nil
 	}
-	lf, ok, err := remote.LoadLockfile(dir)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("%s/%s declares remote imports but %s is missing; run `pasta sync %s`",
-			dir, remote.ManifestFile, remote.LockFile, dir)
-	}
 	f, err := newDefaultFetcher()
 	if err != nil {
 		return nil, err
+	}
+	lf, lfExists, err := remote.LoadLockfile(dir)
+	if err != nil {
+		return nil, err
+	}
+	// Run sync transparently when the lock is missing or doesn't
+	// match the manifest. The fetcher's Fetch (version → commit) is
+	// only called on entries that actually need re-resolving;
+	// everything else passes through Sync's cache-reuse path.
+	if !lfExists {
+		lf, err = remote.Sync(dir, manifest, f)
+		if err != nil {
+			return nil, fmt.Errorf("auto-sync %s: %w", dir, err)
+		}
+	} else if inSync, _ := remote.IsInSync(manifest, lf); !inSync {
+		lf, err = remote.Sync(dir, manifest, f)
+		if err != nil {
+			return nil, fmt.Errorf("auto-sync %s: %w", dir, err)
+		}
 	}
 	dirs, err := remote.VendorDirs(manifest, lf, f)
 	if err != nil {

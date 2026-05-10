@@ -191,6 +191,10 @@ pasta -fix path/to/rule.cue ./...
 
 # Run all rules in a directory against its testdata/.
 pasta test path/to/rule-dir
+
+# Fetch any remote rule modules declared in <rule-dir>/pasta.cue and
+# write a pasta.lock with resolved commit SHAs (network access).
+pasta sync path/to/rule-dir
 ```
 
 When more than one source file is supplied (directly or via `./...`
@@ -232,6 +236,38 @@ Files directly under `testdata/` are run as independent single-file
 groups. Each subdirectory of `testdata/` is run as one multi-file
 group sharing a fact store — use subdirs to test cross-file analyzers
 with realistic multi-file inputs.
+
+## Remote rule imports
+
+Rule directories can pull in rule modules published in other
+repositories. Declare them in a `pasta.cue` manifest at the rule
+directory root:
+
+```cue
+// my-rule/pasta.cue
+imports: {
+    "github.com/alice/lint-rules": "v1.2.3"
+}
+```
+
+then run `pasta sync my-rule/` to fetch the module and write
+`my-rule/pasta.lock` pinning the resolved commit SHA. From any rule
+in the directory, import the module as a normal CUE package:
+
+```cue
+import "github.com/alice/lint-rules/python_taint"
+```
+
+Modules are cached under `$XDG_CACHE_HOME/pasta/modules/` and keyed
+by commit, so re-tagging upstream after a sync can't silently change
+what your rules see — `pasta` re-uses the locked SHA until you run
+`pasta sync` again.
+
+Publishing a rule module is just `git push` plus `git tag`: any
+public repo whose `https://<path>.git` URL `git ls-remote` can
+resolve will work. Versions are git refs (tags, branches, or full
+SHAs) — there's no semver resolution, and a remote module is not
+allowed to declare its own remote imports (flat deps only in v1).
 
 ## Use case: shipping adapters for breaking changes
 

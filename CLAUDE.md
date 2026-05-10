@@ -63,8 +63,9 @@ than `go test`.
 | Path | What it is |
 |------|------------|
 | `internal/dsl/`               | Go structs mirroring the CUE schema. `dsl.Arg` is a sum of `string` and `[]string` for predicate args. |
-| `internal/loader/`            | CUE loader. Embeds the built-in `github.com/imjasonh/pasta` module under `internal/loader/cuemod/`. |
+| `internal/loader/`            | CUE loader. Embeds the built-in `github.com/imjasonh/pasta` module under `internal/loader/cuemod/`, and vendors any remote modules declared in the rule directory's `pasta.cue` into the same overlay. |
 | `internal/loader/cuemod/`     | The embedded built-in CUE module: `schema/`, `lang/<name>/`, `patterns/<name>/`. |
+| `internal/remote/`            | Remote rule imports: `pasta.cue` manifest + `pasta.lock` lockfile, git-based fetcher, on-disk cache under `$XDG_CACHE_HOME/pasta/modules/`. Flat deps only — a remote module declaring its own remote imports is rejected. |
 | `internal/lang/`              | Runtime language registry. `grammars.go` is the only Go-side language code (maps grammar name → tree-sitter `GetLanguage`). |
 | `internal/tsutil/`            | gotreesitter `Node` wrapper that carries source bytes + language + file-id, so callers don't have to thread them. |
 | `internal/match/`             | Pattern matcher: node unions, fields, adjacent windows, preceding, predicates (positional), checks (named). |
@@ -158,6 +159,32 @@ and the runner registers them at startup.
   analysis work via `has_fact` / `not_has_fact`. Testdata uses
   unique names where bleed would corrupt the test; production
   precision needs scope-aware fact keys (see future-work.md).
+
+## Remote imports
+
+A rule directory can declare external rule modules in a `pasta.cue`
+manifest at its root:
+
+```cue
+imports: {
+    "github.com/alice/lint-rules": "v1.2.3"
+}
+```
+
+`pasta sync <rule-dir>` resolves each version to a commit SHA via
+`git ls-remote`, fetches the module into
+`$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and writes a
+`pasta.lock` next to the manifest. Subsequent loads are offline as
+long as the lock matches the manifest and the cache still holds the
+locked commit. Rules then import the module like any other CUE
+package — `import "github.com/alice/lint-rules/<subpath>"`.
+
+v1 limits: flat deps only (a remote module's own `pasta.cue` with
+non-empty `imports` is a hard error during sync); the version string
+is a literal git ref (tag / branch / full SHA), no semver
+constraints; `git` is the fetcher. The Fetcher interface in
+`internal/remote/remote.go` is the single seam — swap it later for
+OCI / native CUE modules without changing the manifest format.
 
 ## Open work
 

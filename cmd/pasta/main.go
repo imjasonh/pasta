@@ -4,6 +4,7 @@
 //
 //	pasta [-fix] [-skip <dirs>] <rule.cue> <source> [<source>...]
 //	pasta test <rule-dir> [<rule-dir>...]            run rules on their testdata/
+//	pasta sync <rule-dir>                            fetch remote imports declared in <rule-dir>/pasta.cue
 //
 // A source argument ending in `/...` (or the literal `./...`) is
 // expanded to every file under that directory whose extension maps
@@ -36,12 +37,18 @@ import (
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/lang"
+	"github.com/imjasonh/pasta/internal/remote"
 	"github.com/imjasonh/pasta/internal/runner"
 )
 
 func main() {
-	if len(os.Args) >= 2 && os.Args[1] == "test" {
-		os.Exit(runTest(os.Args[2:]))
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "test":
+			os.Exit(runTest(os.Args[2:]))
+		case "sync":
+			os.Exit(runSync(os.Args[2:]))
+		}
 	}
 	os.Exit(runFix(os.Args[1:]))
 }
@@ -204,6 +211,72 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 		return nil
 	})
 	return out, err
+}
+
+// runSync resolves the manifest in each rule directory: fetches every
+// declared remote module, populates the on-disk cache, and writes
+// pasta.lock with the resolved commit SHAs and content hashes.
+//
+// Network access happens here — `pasta sync` is the one place we
+// reach out. Subsequent `pasta` runs are offline as long as the lock
+// matches the manifest and the cache still has the locked commit.
+func runSync(args []string) int {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: pasta sync <rule-dir> [<rule-dir>...]")
+		return 2
+	}
+	cacheDir, err := remote.DefaultCacheDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	f := &remote.GitFetcher{CacheDir: cacheDir}
+	exit := 0
+	for _, dir := range args {
+		m, ok, err := remote.LoadManifest(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", dir, err)
+			exit = 1
+			continue
+		}
+		if !ok || len(m.Modules) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: no remote imports declared\n", dir)
+			continue
+		}
+		lf, err := remote.Sync(dir, m, f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", dir, err)
+			exit = 1
+			continue
+		}
+		// Print resolved versions in sorted order so output is
+		// stable across runs.
+		var paths []string
+		for p := range lf.Modules {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		fmt.Fprintf(os.Stderr, "ok   %s (%d module%s)\n", dir, len(paths), plural(len(paths)))
+		for _, p := range paths {
+			e := lf.Modules[p]
+			fmt.Fprintf(os.Stderr, "     %s %s %s\n", p, e.Version, shortSHA(e.Commit))
+		}
+	}
+	return exit
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func shortSHA(s string) string {
+	if len(s) < 12 {
+		return s
+	}
+	return s[:12]
 }
 
 func runTest(args []string) int {

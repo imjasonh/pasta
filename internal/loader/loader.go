@@ -23,6 +23,7 @@ import (
 	"cuelang.org/go/cue/load"
 
 	"github.com/imjasonh/pasta/internal/dsl"
+	"github.com/imjasonh/pasta/internal/remote"
 )
 
 //go:embed all:cuemod
@@ -56,6 +57,10 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
+	// pasta.cue is the remote-imports manifest, not a rule file —
+	// drop it from the rule list (it's vendored into the overlay
+	// separately by buildOverlay).
+	matches = filterManifest(matches)
 	if len(matches) == 0 {
 		return LoadResult{}, fmt.Errorf("no *.cue files in %s", dir)
 	}
@@ -215,6 +220,11 @@ func loadPath(path string) (LoadResult, error) {
 // buildOverlay synthesizes any missing cue.mod for the user directory
 // and vendors the embedded github.com/imjasonh/pasta module under
 // <userDir>/cue.mod/pkg/github.com/imjasonh/pasta/.
+//
+// If userDir contains a pasta.cue manifest, every module it lists
+// (resolved via the lockfile + cache) is also vendored under
+// <userDir>/cue.mod/pkg/<modulePath>/, so user rules can import them
+// the same way they import the built-in module.
 func buildOverlay(userDir, userFile string) (map[string]load.Source, error) {
 	overlay := map[string]load.Source{}
 
@@ -253,12 +263,101 @@ language: version: "v0.13.0"
 		return nil, err
 	}
 
+	// Vendor any remote modules declared in pasta.cue. Resolution
+	// goes through the lockfile + on-disk cache; no fetching here.
+	// Loading errors out cleanly if the user hasn't run `pasta sync`.
+	if err := vendorRemoteModules(userDir, overlay); err != nil {
+		return nil, err
+	}
+
 	// If the user's CUE file is anonymous (no package), the loader needs
 	// the file path explicitly to know what to load. The overlay already
 	// has the file on disk so no extra entry is needed.
 	_ = userFile
 
 	return overlay, nil
+}
+
+// vendorRemoteModules reads dir/pasta.cue + dir/pasta.lock and copies
+// each cached module's files into overlay under
+// <dir>/cue.mod/pkg/<modulePath>/. No network access — fetching
+// happens out of band via `pasta sync`.
+//
+// remoteFetcher is package-level so tests can swap in a fake
+// (see internal/loader/remote_test.go).
+func vendorRemoteModules(dir string, overlay map[string]load.Source) error {
+	manifest, ok, err := remote.LoadManifest(dir)
+	if err != nil {
+		return err
+	}
+	if !ok || len(manifest.Modules) == 0 {
+		return nil
+	}
+	lf, ok, err := remote.LoadLockfile(dir)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s/%s declares remote imports but %s is missing; run `pasta sync %s`",
+			dir, remote.ManifestFile, remote.LockFile, dir)
+	}
+	f, err := newDefaultFetcher()
+	if err != nil {
+		return err
+	}
+	dirs, err := remote.VendorDirs(manifest, lf, f)
+	if err != nil {
+		return err
+	}
+	for modPath, modDir := range dirs {
+		err := filepath.WalkDir(modDir, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				return nil
+			}
+			b, rerr := os.ReadFile(p)
+			if rerr != nil {
+				return rerr
+			}
+			rel, rerr := filepath.Rel(modDir, p)
+			if rerr != nil {
+				return rerr
+			}
+			target := filepath.Join(dir, "cue.mod", "pkg", filepath.FromSlash(modPath), rel)
+			overlay[target] = load.FromBytes(b)
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("vendor %s: %w", modPath, err)
+		}
+	}
+	return nil
+}
+
+// newDefaultFetcher returns the production GitFetcher pointed at the
+// resolved cache dir. Indirected through a package var so tests can
+// swap it.
+var newDefaultFetcher = func() (remote.Fetcher, error) {
+	cache, err := remote.DefaultCacheDir()
+	if err != nil {
+		return nil, err
+	}
+	return &remote.GitFetcher{CacheDir: cache}, nil
+}
+
+// filterManifest drops the pasta.cue manifest from a list of *.cue
+// glob results — it isn't a rule file and shouldn't be loaded as one.
+func filterManifest(paths []string) []string {
+	out := paths[:0]
+	for _, p := range paths {
+		if filepath.Base(p) == remote.ManifestFile {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // extractTopLevel iterates non-definition top-level fields of v and

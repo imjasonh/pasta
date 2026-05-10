@@ -172,25 +172,37 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 ```
 go install github.com/imjasonh/pasta/cmd/pasta@latest
 
-# Run a rule against one or more sources.
+# Project-style: drop your rules in ./.pasta/ and just run pasta.
+# Rules are loaded from ./.pasta/, sources default to ./...
+mkdir -p .pasta && cp path/to/some-rule.cue .pasta/
+pasta              # report
+pasta -fix         # apply fixes
+
+# Same, but pointing at a different rule directory.
+pasta -rules path/to/rule-dir
+pasta -rules path/to/rule-dir ./...
+pasta -fix -rules path/to/rule-dir file.go
+
+# Single-rule shortcut: first positional arg is a .cue file.
 pasta path/to/rule.cue file.go [file.go ...]
-
-# Run a rule against EVERY source file under a directory, recursively.
-# `./...` is the current dir; `pkg/...` is `pkg/` and below. Files
-# whose extension doesn't map to a registered language are skipped.
-# `.git`, `vendor`, and `node_modules` are skipped by default; use
-# `-skip` with a comma-separated list to add more (e.g. `dist,build`).
 pasta path/to/rule.cue ./...
-pasta -skip dist,build path/to/rule.cue ./...
-
-# Apply suggested fixes — rewrites each source file in place.
-# Files whose fixed bytes match the input are left untouched (mtime
-# unchanged), so re-running on a clean tree is a no-op.
-pasta -fix path/to/rule.cue file.go
 pasta -fix path/to/rule.cue ./...
 
-# Run all rules in a directory against its testdata/.
+# `./...` recurses from the current dir; `pkg/...` is `pkg/` and below.
+# Files whose extension doesn't map to a registered language are skipped.
+# `.git`, `vendor`, `node_modules`, and `.pasta` are skipped by default;
+# use `-skip` with a comma-separated list to add more (e.g. `dist,build`).
+pasta -skip dist,build ./...
+
+# Run rules in a directory against its testdata/. Defaults to ./.pasta/.
+pasta test
 pasta test path/to/rule-dir
+
+# Fetch any remote rule modules declared in <rule-dir>/pasta.cue and
+# write a pasta.lock with resolved commit SHAs (network access).
+# Defaults to ./.pasta/.
+pasta sync
+pasta sync path/to/rule-dir
 ```
 
 When more than one source file is supplied (directly or via `./...`
@@ -232,6 +244,89 @@ Files directly under `testdata/` are run as independent single-file
 groups. Each subdirectory of `testdata/` is run as one multi-file
 group sharing a fact store — use subdirs to test cross-file analyzers
 with realistic multi-file inputs.
+
+## Remote rule imports
+
+Rule directories can pull in rule modules published in other
+repositories. Declare them in a `pasta.cue` manifest at the rule
+directory root (typically `./.pasta/pasta.cue`):
+
+```cue
+// .pasta/pasta.cue
+imports: {
+    "github.com/alice/lint-rules": "v1.2.3"
+}
+```
+
+The next `pasta` run resolves the version, fetches the module,
+and writes `./.pasta/pasta.lock` pinning the commit SHA — sync is
+implicit. Subsequent runs are offline as long as the lockfile is
+in sync with the manifest. `pasta sync` still exists if you want
+to refresh a moving ref (branch / tag) eagerly, and
+`pasta sync --check` reports drift without writing files for CI
+gating.
+
+To upgrade pinned versions, run `pasta bump`:
+
+```
+$ pasta bump
+bump github.com/alice/lint-rules v1.2.3 -> v1.4.0
+ok   github.com/bob/security-rules already at v0.9.1
+skip github.com/carol/experimental (no semver tags)
+```
+
+`pasta bump` walks each module's tag list, picks the highest
+stable semver tag, rewrites `pasta.cue` in place (preserving
+comments and formatting), and re-syncs the lockfile. Pass module
+paths to narrow the bump (`pasta bump github.com/alice/lint-rules`).
+Modules pinned to a branch, a non-semver tag, or a full SHA are
+left alone — those have explicit "use the tip" or "stay pinned"
+semantics that bump shouldn't second-guess. Prerelease tags
+(`v2.0.0-rc1`) are deliberately ignored too.
+
+**Every top-level analyzer the module exports is auto-enrolled**, so
+listing the module is enough to start running its rules — no
+per-rule stub in `.pasta/` needed. A `.pasta/` containing only a
+manifest is valid; its rules come entirely from the imports.
+
+```
+my-project/
+  .pasta/
+    pasta.cue       # imports: { "github.com/alice/lint-rules": "v1.2.3" }
+    pasta.lock      # written by `pasta sync`
+  src/...
+```
+
+`pasta` (or `pasta -fix`) from the project root then runs alice's
+rules over `./...`.
+
+If you want to override a rule from a remote module, drop a local
+analyzer with the same name into `.pasta/` — the local version
+wins, and pasta prints a warning to stderr so the suppression is
+visible. Two remote modules exporting an analyzer with the same
+name is an error (resolve by renaming, dropping one of the
+imports, or shadowing both with a local rule).
+
+Rule files in remote modules can also be `import`ed by name from
+your local `.cue` files when you want to compose rather than just
+auto-enroll:
+
+```cue
+import "github.com/alice/lint-rules/python_taint"
+```
+
+Modules are cached under `$XDG_CACHE_HOME/pasta/modules/` and keyed
+by commit, so re-tagging upstream after a sync can't silently change
+what your rules see — `pasta` re-uses the locked SHA until you run
+`pasta sync` again. The cache is hash-verified on every load: if the
+cached files no longer match the lockfile's recorded digest, pasta
+refuses to load and tells you which dir to remove.
+
+Publishing a rule module is just `git push` plus `git tag`: any
+public repo whose `https://<path>.git` URL `git ls-remote` can
+resolve will work. Versions are git refs (tags, branches, or full
+SHAs) — there's no semver resolution, and a remote module is not
+allowed to declare its own remote imports (flat deps only in v1).
 
 ## Use case: shipping adapters for breaking changes
 

@@ -63,8 +63,9 @@ than `go test`.
 | Path | What it is |
 |------|------------|
 | `internal/dsl/`               | Go structs mirroring the CUE schema. `dsl.Arg` is a sum of `string` and `[]string` for predicate args. |
-| `internal/loader/`            | CUE loader. Embeds the built-in `github.com/imjasonh/pasta` module under `internal/loader/cuemod/`. |
+| `internal/loader/`            | CUE loader. Embeds the built-in `github.com/imjasonh/pasta` module under `internal/loader/cuemod/`, and vendors any remote modules declared in the rule directory's `pasta.cue` into the same overlay. |
 | `internal/loader/cuemod/`     | The embedded built-in CUE module: `schema/`, `lang/<name>/`, `patterns/<name>/`. |
+| `internal/remote/`            | Remote rule imports: `pasta.cue` manifest + `pasta.lock` lockfile, git-based fetcher, on-disk cache under `$XDG_CACHE_HOME/pasta/modules/`. Flat deps only — a remote module declaring its own remote imports is rejected. |
 | `internal/lang/`              | Runtime language registry. `grammars.go` is the only Go-side language code (maps grammar name → tree-sitter `GetLanguage`). |
 | `internal/tsutil/`            | gotreesitter `Node` wrapper that carries source bytes + language + file-id, so callers don't have to thread them. |
 | `internal/match/`             | Pattern matcher: node unions, fields, adjacent windows, preceding, predicates (positional), checks (named). |
@@ -158,6 +159,102 @@ and the runner registers them at startup.
   analysis work via `has_fact` / `not_has_fact`. Testdata uses
   unique names where bleed would corrupt the test; production
   precision needs scope-aware fact keys (see future-work.md).
+
+## The `.pasta/` convention
+
+Projects keep their rules in `./.pasta/` at the repo root. Bare
+`pasta` / `pasta -fix` / `pasta sync` / `pasta test` all default to
+this directory; pass `-rules <dir>` (or, for sync/test, an explicit
+positional dir) to override. `.pasta` is added to the `./...` walk's
+default skip list so the rules and their testdata aren't picked up
+as project sources.
+
+The single-rule shortcut still works: when the first positional arg
+is an existing `.cue` file, `pasta rule.cue source...` loads that
+one file as before.
+
+## Remote imports
+
+A rule directory can declare external rule modules in a `pasta.cue`
+manifest at its root (typically `./.pasta/pasta.cue`):
+
+```cue
+imports: {
+    "github.com/alice/lint-rules": "v1.2.3"
+}
+```
+
+Sync is implicit on load. When LoadDir sees a manifest, it checks
+`remote.IsInSync(manifest, lockfile)`; if the lockfile is missing
+or out of sync (different version pinned, new entry added, removed
+entry still present) it calls `remote.Sync` to resolve via
+`git ls-remote`, fetch into
+`$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and write a
+fresh `pasta.lock`. The clean-match path is offline.
+
+`pasta sync` is still a top-level command, but it's no longer
+required for day-to-day use:
+
+- `pasta sync [dir]` — eager refresh. Useful when a manifest pins
+  a branch or moving tag and you want the latest commit pulled in
+  now rather than on next run.
+- `pasta sync --check [dir]` — non-destructive verification. Exits
+  non-zero with a reason if the lockfile drifts from the manifest;
+  doesn't write files. CI uses this to fail builds where someone
+  edited the manifest without committing the regenerated lockfile.
+
+`pasta bump [dir|module-path...]` upgrades version pins. For each
+module it asks the upstream for the tag list (one
+`git ls-remote --tags` per module — exposed as
+`Fetcher.ListTags`), picks the highest stable semver tag via
+`golang.org/x/mod/semver`, then rewrites `pasta.cue` and syncs.
+Implementation lives in `internal/remote/bump.go`:
+
+- `LatestSemverTag(tags)` — pure helper, deliberately filters out
+  prereleases (no surprise rc bumps).
+- `RewriteManifestVersions(dir, updates)` — surgical regex replace
+  on the raw manifest bytes, preserves comments + alignment +
+  ordering. Errors if a path in `updates` isn't actually present.
+- `Bump(dir, filter, fetcher)` — library entry point used by the
+  CLI. Returns `[]BumpResult` describing what happened to each
+  module so the CLI can render `bump`/`ok`/`skip` lines without
+  duplicating logic.
+
+Modules pinned to a branch / non-semver tag / full SHA are
+reported as `skip` with reason "no semver tags" — bump deliberately
+doesn't second-guess those pins.
+
+Tamper detection (cached files no longer hash to the locked digest)
+remains a hard error on every load — implicit sync doesn't paper
+over it.
+
+Two ways to consume a remote module:
+
+1. **Auto-enroll**: by default, every top-level analyzer in every
+   imported module is loaded as if it lived in `.pasta/`. A
+   `.pasta/` containing only a manifest + lockfile is valid — its
+   rules come entirely from the imports.
+
+2. **Explicit import**: a local `.cue` file can also `import
+   "github.com/alice/lint-rules/<subpath>"` and reference values
+   from it (helpers, recipes, partial analyzers). Useful for
+   composing rather than running verbatim.
+
+Naming policy at merge time (loader.go:`mergeAnalyzers`):
+- Local analyzer with the same name as a remote one → local wins,
+  stderr warning. Lets projects patch a remote rule without forking.
+- Two remote analyzers with the same name → hard error. No
+  principled way to pick a winner.
+- Remote modules can suppress auto-enrollment of helpers by making
+  them definitions (`#Recipe` instead of `Recipe`) — `extractTopLevel`
+  iterates with `cue.Definitions(false)`.
+
+v1 limits: flat deps only (a remote module's own `pasta.cue` with
+non-empty `imports` is a hard error during sync); the version string
+is a literal git ref (tag / branch / full SHA), no semver
+constraints; `git` is the fetcher. The Fetcher interface in
+`internal/remote/remote.go` is the single seam — swap it later for
+OCI / native CUE modules without changing the manifest format.
 
 ## Open work
 

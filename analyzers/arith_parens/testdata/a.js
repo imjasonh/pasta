@@ -1,0 +1,12 @@
+function slice(endp, begin, consume) {
+	return endp - begin + consume; // want "parenthesize arithmetic sub-expression"
+}
+
+// `**` (exponent) binds tighter than `+`.
+function expAdd(a, b, c) {
+	return a + b ** c; // want "parenthesize arithmetic sub-expression"
+}
+
+function explicit(a, b, c) {
+	return (a - b) + c;
+}

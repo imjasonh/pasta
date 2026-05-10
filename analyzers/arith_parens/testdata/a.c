@@ -1,0 +1,19 @@
+// The CVE-style C bug from the rule's docstring.
+int slice(int endp, int begin, int consume) {
+	return endp - begin + consume; // want "parenthesize arithmetic sub-expression"
+}
+
+// Mixed precedence: `*` binds tighter than `+`.
+int mul_add(int a, int b, int c) {
+	return a + b * c; // want "parenthesize arithmetic sub-expression"
+}
+
+// Already parenthesized — no diagnostic.
+int explicit(int a, int b, int c) {
+	return (a - b) + c;
+}
+
+// Comparison + logical operators are out of scope.
+int cmp(int a, int b, int c, int d) {
+	return a < b && c == d;
+}

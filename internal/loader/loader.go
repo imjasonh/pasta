@@ -60,11 +60,11 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
-	// pasta.cue is the remote-imports manifest and config.cue is the
-	// project config — neither is a rule file, so drop them from the
-	// rule list (the manifest is vendored into the overlay separately
-	// by buildOverlay; the config is read directly via LoadConfig).
-	matches = filterNonRules(matches)
+	// pasta.cue carries both the remote-imports manifest and the
+	// project config — drop it from the rule list (the manifest is
+	// vendored into the overlay separately by buildOverlay; the
+	// config is read directly via LoadConfig).
+	matches = filterManifest(matches)
 	projectCfg, _, err := LoadConfig(dir)
 	if err != nil {
 		return LoadResult{}, err
@@ -418,14 +418,13 @@ func SetFetcherForTesting(f remote.Fetcher) func() {
 	return func() { newDefaultFetcher = prev }
 }
 
-// filterNonRules drops the pasta.cue manifest and config.cue project
-// config from a list of *.cue glob results — neither is a rule file,
-// and trying to load them as one would fail validation.
-func filterNonRules(paths []string) []string {
+// filterManifest drops the pasta.cue manifest from a list of *.cue
+// glob results — it carries imports + project config, not rule
+// definitions, and would fail rule-schema validation if loaded as one.
+func filterManifest(paths []string) []string {
 	out := paths[:0]
 	for _, p := range paths {
-		base := filepath.Base(p)
-		if base == remote.ManifestFile || base == ConfigFile {
+		if filepath.Base(p) == remote.ManifestFile {
 			continue
 		}
 		out = append(out, p)

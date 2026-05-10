@@ -173,17 +173,22 @@ The single-rule shortcut still works: when the first positional arg
 is an existing `.cue` file, `pasta rule.cue source...` loads that
 one file as before.
 
-## Project config (`config.cue`)
+## Project config (in `pasta.cue`)
 
-A rule directory may carry a `config.cue` alongside `pasta.cue`. It's
-read directly by `internal/loader/config.go`, NOT loaded as a rule
-file (the loader explicitly filters `pasta.cue` and `config.cue` from
-the rule glob via `filterNonRules`). Recognized fields, all optional:
+The rule directory's `pasta.cue` carries both the remote-imports
+manifest (`imports`) AND the project config. Two consumers read the
+same file: `internal/remote/remote.go` `LoadManifest` looks up
+`imports`, and `internal/loader/config.go` `LoadConfig` reads the
+config-relevant fields. The file is filtered out of the rule-load
+glob via `filterManifest` so it isn't validated as a rule.
+
+Recognized config fields, all optional:
 
 ```cue
-disabled_rules: ["go_iferr", "todo_format"]   // skip these rules entirely
-severity: {go_panic_empty: "error"}            // override per-rule severity
-skip: ["build", "dist"]                        // extra ./... walk skip-dirs
+imports: {"github.com/alice/lint-rules": "v1.2.3"}  // remote rule modules
+disabled_rules: ["go_iferr", "todo_format"]         // skip these rules entirely
+severity: {go_panic_empty: "error"}                  // override per-rule severity
+skip: ["build", "dist"]                              // extra ./... walk skip-dirs
 ```
 
 `disabled_rules` and `severity` are applied to the analyzers at load

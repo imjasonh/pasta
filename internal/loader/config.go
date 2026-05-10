@@ -10,34 +10,36 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 
 	"github.com/imjasonh/pasta/internal/dsl"
+	"github.com/imjasonh/pasta/internal/remote"
 )
 
-// ConfigFile is the well-known filename for a project config inside
-// the rule directory. Sits alongside pasta.cue (the imports manifest)
-// — kept separate so the manifest stays a small focused file the
-// remote-imports machinery can parse without dragging in unrelated
-// fields.
-const ConfigFile = "config.cue"
-
-// Config is project-level configuration loaded from
-// `<rules_dir>/config.cue`. Every field is optional; an absent file
-// is equivalent to an empty Config.
+// Config is project-level configuration loaded from the rule
+// directory's `pasta.cue` (the same file that holds the remote-imports
+// manifest). Every field is optional; an absent file is equivalent to
+// an empty Config.
 //
-//	disabled_rules: ["go_iferr", "todo_format"]   // skip these rules entirely
-//	severity:      {go_panic_empty: "error"}       // override per-rule severity
-//	skip:          ["build", "dist"]               // extra ./... walk skip-dirs
+//	imports: { "github.com/alice/lint-rules": "v1.2.3" } // remote rules
+//	disabled_rules: ["go_iferr", "todo_format"]          // skip these rules
+//	severity:       {go_panic_empty: "error"}            // override per-rule severity
+//	skip:           ["build", "dist"]                    // extra ./... walk skip-dirs
+//
+// `imports` is consumed by internal/remote (LoadManifest); this loader
+// only reads the config-relevant fields. Co-locating them in one file
+// keeps a project's pasta-side metadata in a single place.
 type Config struct {
 	DisabledRules []string          `json:"disabled_rules,omitempty"`
 	Severity      map[string]string `json:"severity,omitempty"`
 	Skip          []string          `json:"skip,omitempty"`
 }
 
-// LoadConfig reads `<dir>/config.cue` if present. Returns (nil, false,
-// nil) when the file doesn't exist; callers treat that as "no
-// project config". Validation errors (bad CUE, unknown severity
-// value) come back as a non-nil error.
+// LoadConfig reads `<dir>/pasta.cue` and extracts the config-relevant
+// fields. Returns (nil, false, nil) when the file doesn't exist;
+// callers treat that as "no project config". A file that exists but
+// declares only `imports` (no config fields) yields an empty Config
+// with ok=true. Validation errors (bad CUE, unknown severity value)
+// come back as a non-nil error.
 func LoadConfig(dir string) (*Config, bool, error) {
-	path := filepath.Join(dir, ConfigFile)
+	path := filepath.Join(dir, remote.ManifestFile)
 	src, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, false, nil

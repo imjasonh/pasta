@@ -173,6 +173,56 @@ The single-rule shortcut still works: when the first positional arg
 is an existing `.cue` file, `pasta rule.cue source...` loads that
 one file as before.
 
+## Project config (`config.cue`)
+
+A rule directory may carry a `config.cue` alongside `pasta.cue`. It's
+read directly by `internal/loader/config.go`, NOT loaded as a rule
+file (the loader explicitly filters `pasta.cue` and `config.cue` from
+the rule glob via `filterNonRules`). Recognized fields, all optional:
+
+```cue
+disabled_rules: ["go_iferr", "todo_format"]   // skip these rules entirely
+severity: {go_panic_empty: "error"}            // override per-rule severity
+skip: ["build", "dist"]                        // extra ./... walk skip-dirs
+```
+
+`disabled_rules` and `severity` are applied to the analyzers at load
+time by `applyConfig` (rule-name → drop / severity rewrite).
+`skip` is consumed by the CLI, unioned with `-skip` and the built-in
+defaults. Severity values are validated — anything outside
+`error|warning|info|hint` is a load error.
+
+`runner.LoadProject(dir)` returns `Project{Analyzers, Config}` for
+callers (the CLI) that need access to the raw config. `LoadRules` is
+a thin wrapper that just returns the Analyzers.
+
+## Per-rule suppression
+
+`internal/engine/suppress.go` scans each source file for
+`pasta:ignore` directives at parse time and stashes a
+`map[int]suppression` on `fileState`. In `runRule`, after a rule
+matches, we compute the diagnostic anchor's line and skip both the
+diagnostic and the rewrite when the line is suppressed for that rule
+name. Fact emission still happens — facts are internal state and
+dropping them would distort downstream rules.
+
+Forms (any comment style is fine; pasta only looks at the text):
+
+```
+x := foo() // pasta:ignore                  — every rule on this line
+x := foo() // pasta:ignore go_iferr         — one rule
+x := foo() // pasta:ignore go_iferr, errcheck  — several
+```
+
+## Filename gating (`file_match`)
+
+A rule may declare `file_match: ["*_test.go"]` to restrict itself to
+files whose basename matches one of the listed
+`path/filepath.Match` globs. Empty / absent means "every file the
+language filter already accepted". Applied in
+`engine.runGroupOnFile` via `ruleAppliesToFile`, alongside the
+existing language filter.
+
 ## Remote imports
 
 A rule directory can declare external rule modules in a `pasta.cue`

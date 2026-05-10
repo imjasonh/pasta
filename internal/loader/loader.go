@@ -31,10 +31,12 @@ import (
 var embeddedFS embed.FS
 
 // LoadResult is the parsed contents of one or more CUE files: zero or
-// more analyzers and zero or more language declarations.
+// more analyzers and zero or more language declarations, plus an
+// optional Config when the directory carried a config.cue.
 type LoadResult struct {
 	Analyzers []*dsl.Analyzer
 	Languages []dsl.LanguageDecl
+	Config    *Config
 }
 
 // LoadFile loads a single .cue analyzer file from disk and returns the
@@ -58,10 +60,15 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
-	// pasta.cue is the remote-imports manifest, not a rule file —
-	// drop it from the rule list (it's vendored into the overlay
-	// separately by buildOverlay).
-	matches = filterManifest(matches)
+	// pasta.cue is the remote-imports manifest and config.cue is the
+	// project config — neither is a rule file, so drop them from the
+	// rule list (the manifest is vendored into the overlay separately
+	// by buildOverlay; the config is read directly via LoadConfig).
+	matches = filterNonRules(matches)
+	projectCfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return LoadResult{}, err
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return LoadResult{}, err
@@ -127,6 +134,8 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
+	applyConfig(projectCfg, merged.Analyzers)
+	merged.Config = projectCfg
 	return merged, nil
 }
 
@@ -409,12 +418,14 @@ func SetFetcherForTesting(f remote.Fetcher) func() {
 	return func() { newDefaultFetcher = prev }
 }
 
-// filterManifest drops the pasta.cue manifest from a list of *.cue
-// glob results — it isn't a rule file and shouldn't be loaded as one.
-func filterManifest(paths []string) []string {
+// filterNonRules drops the pasta.cue manifest and config.cue project
+// config from a list of *.cue glob results — neither is a rule file,
+// and trying to load them as one would fail validation.
+func filterNonRules(paths []string) []string {
 	out := paths[:0]
 	for _, p := range paths {
-		if filepath.Base(p) == remote.ManifestFile {
+		base := filepath.Base(p)
+		if base == remote.ManifestFile || base == ConfigFile {
 			continue
 		}
 		out = append(out, p)

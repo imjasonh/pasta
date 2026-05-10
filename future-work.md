@@ -324,25 +324,97 @@ would need to update.
 
 ## Tooling / UX
 
-### `pasta init` to scaffold a new analyzer
+A few of these (the LSP server, project config, per-rule
+suppression directives, filename gating) have already shipped — the
+remaining items below are the gaps still on the usability roadmap,
+roughly ordered by adoption impact.
+
+### `pasta init` / `pasta new <lang>_<name>` to scaffold rules
 **Effort:** S.
-A subcommand that creates `analyzers/<name>/<name>.cue` with a
-minimal template, plus `testdata/` with a placeholder source and
-golden file. Lowers the barrier to first analyzer.
+`pasta init` creates `.pasta/` with a starter rule + `testdata/`,
+mirroring `analyzers/<name>/`. `pasta new` adds a rule inside an
+existing dir from a small recipe set (rewrite vs. diagnostic-only,
+fact-passing) so a contributor starts from a known-good shape.
+Lowers the barrier to first analyzer; today new authors copy from
+the repo and learn the layout by hand.
+
+### `pasta test --watch` / `--update`
+**Effort:** S.
+The `// want` / golden loop is the tightest authoring feedback we
+have; auto-rerun on file change (watch) plus regenerate-golden-on-
+demand (update) would make it tighter. `runner.TestDir` already
+returns structured failures, so this is glue.
 
 ### Better diagnostic output
 **Effort:** S.
 Today the CLI prints `path:line: message [rule]`. Adding column
 ranges (we have byte ranges in Diagnostic.StartByte/EndByte) and
 optionally a snippet of the offending source would match what
-modern linters output.
+modern linters output. A `-format=text|json|sarif|github` flag
+would unlock GitHub code-scanning, GitLab, and IDE integrations
+that already speak SARIF; the `github` actions-format gives inline
+PR annotations for free.
+
+### Severity-aware exit codes and end-of-run summary
+**Effort:** S.
+Adding `-W error` (treat warnings as errors) / `--max-warnings N`
+plus a final-line summary like `3 errors, 12 warnings, 5 fixable`
+matches what `eslint` / `clippy` / `golangci-lint` users expect.
+Config-level severity overrides are already wired up (`config.cue`
+`severity:`), so the policy half is done.
+
+### `pasta explain <rule>` and auto-derived help URLs
+**Effort:** S. **Surfaced by:** every diagnostic users see.
+The Diagnose schema already carries `message`; what's missing is a
+help URL and a way to print the full rule docstring without grep.
+Synthesizing `_help_url` from the rule name (mirrors clippy's
+approach) plus a `pasta explain` subcommand that prints `rule.Doc`,
+severity, fixability, and the help URL would cover both ends. Pure
+CUE / runner work, no engine change.
+
+### `pasta doctor`
+**Effort:** S.
+Diagnose common setup issues in one shot: pre-commit hook
+installed, rules dir found, lockfile in sync, all referenced
+grammars linked, `config.cue` parses cleanly. Cuts down on
+"why isn't it working" support — a lot of failures today surface as
+unrelated CUE errors rather than a clear "your hook isn't
+installed" message.
+
+### Distribution
+**Effort:** S–M.
+Adoption ceiling is low until installation is one line:
+- Prebuilt binaries via goreleaser per tagged release.
+- Homebrew tap.
+- `imjasonh/pasta-action@v1` GitHub Action wrapping `pasta` /
+  `pasta -fix` with optional SARIF upload.
+- Static rule-registry page generated from analyzer metadata —
+  every shipped rule + any blessed remote modules — so users can
+  browse without cloning.
 
 ### `pasta lint` over a project (vs. `pasta -fix` per file)
 **Effort:** M.
 A subcommand that walks the working tree, detects languages by
 extension, runs every shipped analyzer applicable to each file, and
-reports. Aggregating results into a JSON or SARIF format would
-integrate with CI tools.
+reports. Mostly subsumed by the `-format` flag above; this entry is
+the heavier workflow framing for CI integrations that want a single
+canonical entry point.
+
+### `pasta:ignore-next-line` form
+**Effort:** S.
+The current per-line directive (`// pasta:ignore <rule>`) anchors
+on the same line as the diagnostic. A
+`// pasta:ignore-next-line` variant would suppress findings on
+lines that can't carry a trailing comment — Python decorators,
+expression-continuation lines, the line being rewritten. One-screen
+addition to `internal/engine/suppress.go`.
+
+### Severity overrides via CLI flag
+**Effort:** S.
+`config.cue` lets a project pin per-rule severity; a
+`-severity rule=error,other=info` flag would let CI override
+locally without committing config changes. Plumbs into the same
+applyConfig path the loader already uses.
 
 ### Comment preservation polish
 **Effort:** S. **Surfaced by:** iferr edge cases.

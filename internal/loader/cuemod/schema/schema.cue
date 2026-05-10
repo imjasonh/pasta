@@ -126,6 +126,14 @@ package schema
 
 	languages: [...string] | *["*"]
 
+	// Optional filename-glob filter. When set, the rule only runs on
+	// files whose basename matches at least one pattern. Patterns use
+	// path/filepath.Match semantics (`*`, `?`, `[...]`). Useful for
+	// test-only or header-only rules — e.g. `["*_test.go"]`,
+	// `["*.h", "*.hpp"]`. An empty list (the default) means "every
+	// file the language filter accepts".
+	file_match?: [...string]
+
 	match: #Pattern
 
 	pre_conditions?: [...#Precondition]

@@ -44,6 +44,7 @@ import (
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/lang"
+	"github.com/imjasonh/pasta/internal/loader"
 	"github.com/imjasonh/pasta/internal/remote"
 	"github.com/imjasonh/pasta/internal/runner"
 )
@@ -76,7 +77,7 @@ func runFix(args []string) int {
 		return 2
 	}
 
-	analyzers, rawSources, code := selectRules(*rulesDir, fs.Args())
+	analyzers, cfg, rawSources, code := selectRules(*rulesDir, fs.Args())
 	if code != 0 {
 		return code
 	}
@@ -86,7 +87,7 @@ func runFix(args []string) int {
 		rawSources = []string{"./..."}
 	}
 
-	expanded, err := expandSources(rawSources, parseSkipDirs(*skip))
+	expanded, err := expandSources(rawSources, parseSkipDirs(*skip, cfg))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
@@ -138,10 +139,11 @@ func runFix(args []string) int {
 // form (`pasta rule.cue source...`, triggered when the first
 // positional argument is an existing .cue file).
 //
-// Returns the loaded analyzers, the remaining positional args to be
-// treated as sources, and a process exit code (0 = ok). Errors are
-// printed to stderr.
-func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, []string, int) {
+// Returns the loaded analyzers, the project config (nil for the
+// single-file form or when no pasta.cue is present), the remaining
+// positional args to be treated as sources, and a process exit code
+// (0 = ok). Errors are printed to stderr.
+func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, *loader.Config, []string, int) {
 	// Single-rule shortcut: first positional is an existing .cue
 	// file. -rules wins if explicitly set, so users who want to mix
 	// can still force directory mode.
@@ -150,9 +152,9 @@ func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, []s
 			a, err := runner.LoadRule(positional[0])
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "load %s: %v\n", positional[0], err)
-				return nil, nil, 1
+				return nil, nil, nil, 1
 			}
-			return []*dsl.Analyzer{a}, positional[1:], 0
+			return []*dsl.Analyzer{a}, nil, positional[1:], 0
 		}
 	}
 
@@ -173,14 +175,14 @@ func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, []s
 		} else {
 			fmt.Fprintf(os.Stderr, "no rules to run: pass a .cue rule file or create a ./%s/ directory (or use -rules <dir>)\n", DefaultRulesDir)
 		}
-		return nil, nil, 2
+		return nil, nil, nil, 2
 	}
-	analyzers, err := runner.LoadRules(dir)
+	p, err := runner.LoadProject(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load %s: %v\n", dir, err)
-		return nil, nil, 1
+		return nil, nil, nil, 1
 	}
-	return analyzers, positional, 0
+	return p.Analyzers, p.Config, positional, 0
 }
 
 // expandSources turns CLI source arguments into concrete file paths.
@@ -231,12 +233,20 @@ var defaultSkipDirs = map[string]bool{
 	".pasta":       true,
 }
 
-// parseSkipDirs returns the union of defaultSkipDirs and the
-// comma-separated user-supplied list. Empty entries are ignored.
-func parseSkipDirs(extra string) map[string]bool {
-	out := make(map[string]bool, len(defaultSkipDirs)+4)
+// parseSkipDirs returns the union of defaultSkipDirs, any `skip` list
+// the project config declared, and the comma-separated user-supplied
+// list. Empty entries are ignored.
+func parseSkipDirs(extra string, cfg *loader.Config) map[string]bool {
+	out := make(map[string]bool, len(defaultSkipDirs)+8)
 	for k := range defaultSkipDirs {
 		out[k] = true
+	}
+	if cfg != nil {
+		for _, s := range cfg.Skip {
+			if s = strings.TrimSpace(s); s != "" {
+				out[s] = true
+			}
+		}
 	}
 	for _, s := range strings.Split(extra, ",") {
 		if s = strings.TrimSpace(s); s != "" {

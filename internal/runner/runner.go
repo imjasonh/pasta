@@ -33,21 +33,42 @@ type FileResult struct {
 
 // LoadRules loads every *.cue file in dir, returning all analyzers
 // found. Any language declarations present in the dir are registered
-// with internal/lang so subsequent file dispatch sees them.
+// with internal/lang so subsequent file dispatch sees them. Project
+// config from `pasta.cue` is applied transparently — disabled rules
+// are dropped and severity overrides are baked in.
 func LoadRules(dir string) ([]*dsl.Analyzer, error) {
-	res, err := loader.LoadDir(dir)
+	p, err := LoadProject(dir)
 	if err != nil {
 		return nil, err
 	}
+	return p.Analyzers, nil
+}
+
+// Project is everything LoadProject returns: the loaded analyzers and
+// the project's Config (nil when the directory has no pasta.cue).
+type Project struct {
+	Analyzers []*dsl.Analyzer
+	Config    *loader.Config
+}
+
+// LoadProject is LoadRules + access to the parsed project config.
+// Use this when the caller needs config fields (e.g. the CLI consumes
+// `skip` for ./... expansion). Disabled-rule and severity-override
+// transforms have already been applied to Analyzers.
+func LoadProject(dir string) (Project, error) {
+	res, err := loader.LoadDir(dir)
+	if err != nil {
+		return Project{}, err
+	}
 	for _, ld := range res.Languages {
 		if err := lang.Register(ld); err != nil {
-			return nil, fmt.Errorf("register language %q: %w", ld.Name, err)
+			return Project{}, fmt.Errorf("register language %q: %w", ld.Name, err)
 		}
 	}
 	if len(res.Analyzers) == 0 {
-		return nil, fmt.Errorf("%s: no analyzers found", dir)
+		return Project{}, fmt.Errorf("%s: no analyzers found", dir)
 	}
-	return res.Analyzers, nil
+	return Project{Analyzers: res.Analyzers, Config: res.Config}, nil
 }
 
 // LoadRule loads a single .cue file as an analyzer.

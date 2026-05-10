@@ -9,6 +9,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/effect"
@@ -70,10 +71,11 @@ func Run(
 
 // fileState is the parsed-and-prepared state for one file in a group.
 type fileState struct {
-	input FileInput
-	tree  releaser
-	root  tsutil.Node
-	env   *match.Env
+	input    FileInput
+	tree     releaser
+	root     tsutil.Node
+	env      *match.Env
+	suppress map[int]suppression
 }
 
 // releaser is the subset of *gts.Tree we actually need (Release).
@@ -126,7 +128,13 @@ func RunGroup(
 			CommentTypes: commentTypes,
 			Index:        match.BuildIndex(root),
 		}
-		states = append(states, fileState{input: f, tree: tree, root: root, env: env})
+		states = append(states, fileState{
+			input:    f,
+			tree:     tree,
+			root:     root,
+			env:      env,
+			suppress: parseSuppressions(root, commentTypes),
+		})
 	}
 
 	groups, err := scheduleGroups(analyzers)
@@ -171,21 +179,46 @@ func RunGroup(
 // using s's parse tree and env. When collect is nil only facts are
 // emitted; when non-nil, diagnostics and edit ops are appended.
 func runGroupOnFile(group ruleGroup, s fileState, store *factstore.Store, collect *Result) error {
+	base := filepath.Base(s.input.FileID)
 	for _, sr := range group.rules {
 		if !ruleAppliesToLanguage(&sr.rule, s.input.Lang) {
 			continue
 		}
-		if err := runRule(&sr, s.env, s.root, store, collect); err != nil {
+		if !ruleAppliesToFile(&sr.rule, base) {
+			continue
+		}
+		if err := runRule(&sr, s.env, s.root, store, collect, s.suppress); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// ruleAppliesToFile evaluates a rule's file_match globs against the
+// file's basename. An empty list means "no filter — apply to every
+// file the language filter already accepted".
+func ruleAppliesToFile(rule *dsl.Rule, base string) bool {
+	if len(rule.FileMatch) == 0 {
+		return true
+	}
+	for _, pat := range rule.FileMatch {
+		if ok, _ := filepath.Match(pat, base); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // runRule matches the rule, runs preconditions, and (if collect != nil)
 // appends diagnostics and edit ops to the result. Facts are always
 // emitted into the store, regardless of collect.
-func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factstore.Store, collect *Result) error {
+//
+// `suppress` carries any `pasta:ignore` directives parsed out of the
+// file. A diagnostic anchored on a suppressed line is dropped along
+// with the rule's rewrite for that match — facts still emit, since
+// they're internal state and dropping them would change downstream
+// rule behavior.
+func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factstore.Store, collect *Result, suppress map[int]suppression) error {
 	rule := sr.rule
 	matches := match.FindAll(&rule.Match, root, env)
 	for _, m := range matches {
@@ -197,6 +230,9 @@ func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factsto
 			continue
 		}
 		diagAnchor := pickDiagAnchor(&rule, m)
+		if isSuppressed(suppress, rule.Name, effect.ComputeLine(diagAnchor.Src, diagAnchor.StartByte())) {
+			continue
+		}
 		if rule.Diagnose != nil {
 			collect.Diagnostics = append(collect.Diagnostics,
 				effect.BuildDiagnostic(rule.Name, rule.Diagnose, diagAnchor, m.Captures))

@@ -31,10 +31,13 @@ import (
 var embeddedFS embed.FS
 
 // LoadResult is the parsed contents of one or more CUE files: zero or
-// more analyzers and zero or more language declarations.
+// more analyzers and zero or more language declarations, plus an
+// optional Config when the directory's pasta.cue carried any config
+// fields (disabled_rules / severity / skip).
 type LoadResult struct {
 	Analyzers []*dsl.Analyzer
 	Languages []dsl.LanguageDecl
+	Config    *Config
 }
 
 // LoadFile loads a single .cue analyzer file from disk and returns the
@@ -58,10 +61,15 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
-	// pasta.cue is the remote-imports manifest, not a rule file —
-	// drop it from the rule list (it's vendored into the overlay
-	// separately by buildOverlay).
+	// pasta.cue carries both the remote-imports manifest and the
+	// project config — drop it from the rule list (the manifest is
+	// vendored into the overlay separately by buildOverlay; the
+	// config is read directly via LoadConfig).
 	matches = filterManifest(matches)
+	projectCfg, _, err := LoadConfig(dir)
+	if err != nil {
+		return LoadResult{}, err
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return LoadResult{}, err
@@ -127,6 +135,10 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
+	for _, w := range applyConfig(projectCfg, merged.Analyzers) {
+		fmt.Fprintf(os.Stderr, "pasta: %s\n", w)
+	}
+	merged.Config = projectCfg
 	return merged, nil
 }
 
@@ -410,7 +422,8 @@ func SetFetcherForTesting(f remote.Fetcher) func() {
 }
 
 // filterManifest drops the pasta.cue manifest from a list of *.cue
-// glob results — it isn't a rule file and shouldn't be loaded as one.
+// glob results — it carries imports + project config, not rule
+// definitions, and would fail rule-schema validation if loaded as one.
 func filterManifest(paths []string) []string {
 	out := paths[:0]
 	for _, p := range paths {
@@ -586,6 +599,9 @@ func extractTopLevel(v cue.Value) (LoadResult, error) {
 
 		if a, ok := tryDecodeAnalyzer(val); ok {
 			if err := validateCaptures(a); err != nil {
+				return LoadResult{}, fmt.Errorf("analyzer %q: %w", a.Name, err)
+			}
+			if err := validateFileMatch(a); err != nil {
 				return LoadResult{}, fmt.Errorf("analyzer %q: %w", a.Name, err)
 			}
 			out.Analyzers = append(out.Analyzers, a)

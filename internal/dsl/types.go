@@ -40,11 +40,16 @@ type Fact struct {
 
 // Rule binds a pattern to effects.
 type Rule struct {
-	Name          string         `json:"name"`
-	Doc           string         `json:"doc,omitempty"`
-	Requires      []string       `json:"requires,omitempty"`
-	Provides      []string       `json:"provides,omitempty"`
-	Languages     []string       `json:"languages,omitempty"`
+	Name      string   `json:"name"`
+	Doc       string   `json:"doc,omitempty"`
+	Requires  []string `json:"requires,omitempty"`
+	Provides  []string `json:"provides,omitempty"`
+	Languages []string `json:"languages,omitempty"`
+	// FileMatch is an optional list of filepath.Match-style globs.
+	// When non-empty, the rule runs only on files whose basename
+	// matches at least one entry. Empty means "every file the
+	// language filter already accepted".
+	FileMatch     []string       `json:"file_match,omitempty"`
 	Match         Pattern        `json:"match"`
 	PreConditions []Precondition `json:"pre_conditions,omitempty"`
 	RewriteOpts   *RewriteOpts   `json:"rewrite_opts,omitempty"`

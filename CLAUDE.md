@@ -173,6 +173,69 @@ The single-rule shortcut still works: when the first positional arg
 is an existing `.cue` file, `pasta rule.cue source...` loads that
 one file as before.
 
+## Project config (in `pasta.cue`)
+
+The rule directory's `pasta.cue` carries both the remote-imports
+manifest (`imports`) AND the project config. Two consumers read the
+same file: `internal/remote/remote.go` `LoadManifest` looks up
+`imports`, and `internal/loader/config.go` `LoadConfig` reads the
+config-relevant fields. The file is filtered out of the rule-load
+glob via `filterManifest` so it isn't validated as a rule.
+
+Recognized config fields, all optional:
+
+```cue
+imports: {"github.com/alice/lint-rules": "v1.2.3"}  // remote rule modules
+disabled_rules: ["go_iferr", "todo_format"]         // skip these rules entirely
+severity: {go_panic_empty: "error"}                  // override per-rule severity
+skip: ["build", "dist"]                              // extra ./... walk skip-dirs
+```
+
+`disabled_rules` and `severity` are applied to the analyzers at load
+time by `applyConfig` (rule-name → drop / severity rewrite).
+`skip` is consumed by the CLI, unioned with `-skip` and the built-in
+defaults. Severity values are validated — anything outside
+`error|warning|info|hint` is a load error.
+
+`runner.LoadProject(dir)` returns `Project{Analyzers, Config}` for
+callers (the CLI) that need access to the raw config. `LoadRules` is
+a thin wrapper that just returns the Analyzers.
+
+## Per-rule suppression
+
+`internal/engine/suppress.go` walks the parsed tree, visits every
+node whose Type() is in the language's `comment_types`, and scans
+each comment's text for `pasta:ignore` directives. The result —
+`map[int]suppression` keyed by 1-based source line — is stashed on
+`fileState`. In `runRule`, after a rule matches, we compute the
+diagnostic anchor's line and skip both the diagnostic and the
+rewrite when the line is suppressed for that rule name. Fact
+emission still happens — facts are internal state and dropping them
+would distort downstream rules.
+
+Restricting the scan to comment nodes (rather than text-scanning
+the whole file) means a string literal like
+`log("user typed pasta:ignore go_iferr")` cannot accidentally
+trigger suppression. Languages without declared `comment_types`
+silently get no suppression — better inert than scanning blind.
+
+Forms (any comment style is fine; pasta only looks at the text):
+
+```
+x := foo() // pasta:ignore                  — every rule on this line
+x := foo() // pasta:ignore go_iferr         — one rule
+x := foo() // pasta:ignore go_iferr, errcheck  — several
+```
+
+## Filename gating (`file_match`)
+
+A rule may declare `file_match: ["*_test.go"]` to restrict itself to
+files whose basename matches one of the listed
+`path/filepath.Match` globs. Empty / absent means "every file the
+language filter already accepted". Applied in
+`engine.runGroupOnFile` via `ruleAppliesToFile`, alongside the
+existing language filter.
+
 ## Remote imports
 
 A rule directory can declare external rule modules in a `pasta.cue`

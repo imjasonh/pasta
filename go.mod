@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	cuelang.org/go v0.16.1
 	github.com/odvcencio/gotreesitter v0.16.0
+	golang.org/x/mod v0.34.0
 )
 
 require (

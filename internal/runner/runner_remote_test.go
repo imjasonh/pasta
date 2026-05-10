@@ -36,6 +36,10 @@ func (f *fakeFetcher) FetchCommit(path, commit string) (string, error) {
 	return dir, nil
 }
 
+// ListTags is part of the Fetcher interface; the runner doesn't use
+// it. Stub here so the fake satisfies the interface.
+func (f *fakeFetcher) ListTags(path string) ([]string, error) { return nil, nil }
+
 // TestRemoteAnalyzerFiresEndToEnd is the load → engine → diagnostics
 // e2e for remote rule imports: it stages a fake remote module
 // containing a real working analyzer, points the loader at a fake

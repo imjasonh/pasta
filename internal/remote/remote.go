@@ -221,6 +221,11 @@ type Fetcher interface {
 	// already pinned one). Implementations may share storage with
 	// Fetch — the commit becomes the cache key either way.
 	FetchCommit(modulePath, commit string) (localDir string, err error)
+	// ListTags returns every tag advertised by the remote, in no
+	// particular order. Used by `pasta bump` to find the latest
+	// semver tag without cloning. Implementations should be cheap
+	// (a single ls-remote --tags is enough).
+	ListTags(modulePath string) ([]string, error)
 }
 
 // GitFetcher is the production Fetcher: shells out to `git` to clone
@@ -357,6 +362,36 @@ func (g *GitFetcher) resolve(modulePath, version string) (string, error) {
 		return strings.ToLower(version), nil
 	}
 	return "", fmt.Errorf("resolve %s@%s: no matching tag, branch, or commit", modulePath, version)
+}
+
+// ListTags returns the set of tag names advertised by the upstream
+// remote. Used by `pasta bump` to find the highest semver tag
+// without cloning. Annotated-tag peels (`^{}`) are stripped so each
+// tag appears once.
+func (g *GitFetcher) ListTags(modulePath string) ([]string, error) {
+	cloneURL := "https://" + modulePath + ".git"
+	cmd := exec.Command("git", "ls-remote", "--tags", "--refs", cloneURL)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ls-remote tags %s: %w", modulePath, err)
+	}
+	seen := map[string]bool{}
+	var tags []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		ref := strings.TrimSuffix(fields[1], "^{}")
+		name := strings.TrimPrefix(ref, "refs/tags/")
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		tags = append(tags, name)
+	}
+	return tags, nil
 }
 
 func looksLikeFullSHA(s string) bool {

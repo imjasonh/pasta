@@ -172,6 +172,7 @@ type fakeFetcher struct {
 	root      string                        // where fake modules get materialized
 	resolveFn func(path, ver string) string // tag/branch → commit
 	files     map[string]map[string][]byte  // "<path>@<commit>" → relpath → content
+	tags      map[string][]string           // path → tags advertised by ListTags
 	calls     []string
 }
 
@@ -209,6 +210,11 @@ func (f *fakeFetcher) FetchCommit(path, commit string) (string, error) {
 		}
 	}
 	return target, nil
+}
+
+func (f *fakeFetcher) ListTags(path string) ([]string, error) {
+	f.calls = append(f.calls, "ListTags:"+path)
+	return f.tags[path], nil
 }
 
 func TestSyncWritesLockfile(t *testing.T) {

@@ -203,6 +203,27 @@ required for day-to-day use:
   doesn't write files. CI uses this to fail builds where someone
   edited the manifest without committing the regenerated lockfile.
 
+`pasta bump [dir|module-path...]` upgrades version pins. For each
+module it asks the upstream for the tag list (one
+`git ls-remote --tags` per module — exposed as
+`Fetcher.ListTags`), picks the highest stable semver tag via
+`golang.org/x/mod/semver`, then rewrites `pasta.cue` and syncs.
+Implementation lives in `internal/remote/bump.go`:
+
+- `LatestSemverTag(tags)` — pure helper, deliberately filters out
+  prereleases (no surprise rc bumps).
+- `RewriteManifestVersions(dir, updates)` — surgical regex replace
+  on the raw manifest bytes, preserves comments + alignment +
+  ordering. Errors if a path in `updates` isn't actually present.
+- `Bump(dir, filter, fetcher)` — library entry point used by the
+  CLI. Returns `[]BumpResult` describing what happened to each
+  module so the CLI can render `bump`/`ok`/`skip` lines without
+  duplicating logic.
+
+Modules pinned to a branch / non-semver tag / full SHA are
+reported as `skip` with reason "no semver tags" — bump deliberately
+doesn't second-guess those pins.
+
 Tamper detection (cached files no longer hash to the locked digest)
 remains a hard error on every load — implicit sync doesn't paper
 over it.

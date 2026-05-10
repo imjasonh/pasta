@@ -266,6 +266,24 @@ to refresh a moving ref (branch / tag) eagerly, and
 `pasta sync --check` reports drift without writing files for CI
 gating.
 
+To upgrade pinned versions, run `pasta bump`:
+
+```
+$ pasta bump
+bump github.com/alice/lint-rules v1.2.3 -> v1.4.0
+ok   github.com/bob/security-rules already at v0.9.1
+skip github.com/carol/experimental (no semver tags)
+```
+
+`pasta bump` walks each module's tag list, picks the highest
+stable semver tag, rewrites `pasta.cue` in place (preserving
+comments and formatting), and re-syncs the lockfile. Pass module
+paths to narrow the bump (`pasta bump github.com/alice/lint-rules`).
+Modules pinned to a branch, a non-semver tag, or a full SHA are
+left alone — those have explicit "use the tip" or "stay pinned"
+semantics that bump shouldn't second-guess. Prerelease tags
+(`v2.0.0-rc1`) are deliberately ignored too.
+
 **Every top-level analyzer the module exports is auto-enrolled**, so
 listing the module is enough to start running its rules — no
 per-rule stub in `.pasta/` needed. A `.pasta/` containing only a

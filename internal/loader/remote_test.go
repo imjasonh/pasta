@@ -45,6 +45,10 @@ func (f *fakeFetcher) FetchCommit(path, commit string) (string, error) {
 	return dir, nil
 }
 
+// ListTags is unused by the loader; the loader never calls bump.
+// Stub here so the fake satisfies the Fetcher interface.
+func (f *fakeFetcher) ListTags(path string) ([]string, error) { return nil, nil }
+
 // TestLoadDirWithRemoteImport stages a fake remote module on disk,
 // writes a pasta.cue + pasta.lock pointing at it, and verifies the
 // loader vendors the module into the overlay so a rule that imports

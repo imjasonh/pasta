@@ -55,6 +55,8 @@ func main() {
 			os.Exit(runTest(os.Args[2:]))
 		case "sync":
 			os.Exit(runSync(os.Args[2:]))
+		case "bump":
+			os.Exit(runBump(os.Args[2:]))
 		}
 	}
 	os.Exit(runFix(os.Args[1:]))
@@ -374,6 +376,73 @@ func runSync(args []string) int {
 		for _, p := range paths {
 			e := lf.Modules[p]
 			fmt.Fprintf(os.Stderr, "     %s %s %s\n", p, e.Version, shortSHA(e.Commit))
+		}
+	}
+	return exit
+}
+
+// runBump updates each module's version pin in pasta.cue to the
+// highest semver tag the upstream advertises, then runs sync to
+// refresh the lockfile. Modules pinned to a ref with no semver
+// tags (a branch name, a date-tagged release, a full SHA) are
+// reported as skipped — those already have well-defined update
+// semantics that don't need a "bump" step.
+//
+// Argument shape: positional args are either rule directories (when
+// they exist on disk) or module paths to narrow the bump within
+// ./.pasta/. Plain `pasta bump` bumps every module in ./.pasta/.
+func runBump(args []string) int {
+	// Split args into rule dirs vs. module-path filters. An
+	// existing directory becomes a dir; everything else is treated
+	// as a module-path filter.
+	var dirs []string
+	var modFilter map[string]bool
+	for _, a := range args {
+		if info, err := os.Stat(a); err == nil && info.IsDir() {
+			dirs = append(dirs, a)
+			continue
+		}
+		if modFilter == nil {
+			modFilter = map[string]bool{}
+		}
+		modFilter[a] = true
+	}
+	if len(dirs) == 0 {
+		dirs = []string{DefaultRulesDir}
+	}
+	cacheDir, err := remote.DefaultCacheDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
+	f := &remote.GitFetcher{CacheDir: cacheDir}
+	exit := 0
+	for _, dir := range dirs {
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			fmt.Fprintf(os.Stderr, "%s: rule directory not found\n", dir)
+			exit = 2
+			continue
+		}
+		results, err := remote.Bump(dir, modFilter, f)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", dir, err)
+			exit = 1
+			// Still print partial results below so the user knows
+			// what did get bumped before the failure.
+		}
+		if len(results) == 0 && err == nil {
+			fmt.Fprintf(os.Stderr, "%s: no remote imports declared\n", dir)
+			continue
+		}
+		for _, r := range results {
+			switch {
+			case r.Skipped == "" && r.NewVersion != "":
+				fmt.Fprintf(os.Stderr, "bump %s %s -> %s\n", r.Module, r.OldVersion, r.NewVersion)
+			case r.Skipped == "already up to date":
+				fmt.Fprintf(os.Stderr, "ok   %s already at %s\n", r.Module, r.OldVersion)
+			default:
+				fmt.Fprintf(os.Stderr, "skip %s (%s)\n", r.Module, r.Skipped)
+			}
 		}
 	}
 	return exit

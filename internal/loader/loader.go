@@ -368,13 +368,26 @@ func vendorRemoteModules(dir string, overlay map[string]load.Source) (map[string
 
 // newDefaultFetcher returns the production GitFetcher pointed at the
 // resolved cache dir. Indirected through a package var so tests can
-// swap it.
+// swap it via SetFetcherForTesting.
 var newDefaultFetcher = func() (remote.Fetcher, error) {
 	cache, err := remote.DefaultCacheDir()
 	if err != nil {
 		return nil, err
 	}
 	return &remote.GitFetcher{CacheDir: cache}, nil
+}
+
+// SetFetcherForTesting replaces the fetcher used to resolve remote
+// module imports. Returns a cleanup function that restores the
+// previous fetcher; callers should defer it or pass it to t.Cleanup.
+//
+// Exported so tests in other packages (notably the runner's
+// load→engine→diagnostics e2e) can stage in-memory modules without
+// touching git or the real cache dir.
+func SetFetcherForTesting(f remote.Fetcher) func() {
+	prev := newDefaultFetcher
+	newDefaultFetcher = func() (remote.Fetcher, error) { return f, nil }
+	return func() { newDefaultFetcher = prev }
 }
 
 // filterManifest drops the pasta.cue manifest from a list of *.cue

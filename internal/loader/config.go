@@ -123,13 +123,19 @@ func applyConfig(cfg *Config, analyzers []*dsl.Analyzer) []string {
 	if cfg == nil {
 		return nil
 	}
-	// Index every rule across every analyzer first. We need this
-	// before we start mutating so the typo warnings don't fire
-	// against rules we just removed.
+	// Index every rule across every analyzer first. Two passes over
+	// the rules — one to build the index, one to mutate — so the
+	// typo warnings don't fire against rules we just removed, and
+	// so each severity-override decision is an O(1) lookup instead
+	// of an O(rules) scan.
 	known := map[string]bool{}
+	withDiagnose := map[string]bool{}
 	for _, a := range analyzers {
 		for _, rule := range a.Rules {
 			known[rule.Name] = true
+			if rule.Diagnose != nil {
+				withDiagnose[rule.Name] = true
+			}
 		}
 	}
 
@@ -152,7 +158,7 @@ func applyConfig(cfg *Config, analyzers []*dsl.Analyzer) []string {
 			// be noise.
 			continue
 		}
-		if !ruleHasDiagnose(analyzers, r) {
+		if !withDiagnose[r] {
 			warns = append(warns, fmt.Sprintf("severity: rule %q has no diagnose block; severity %q would not take effect", r, sev))
 		}
 	}
@@ -172,15 +178,4 @@ func applyConfig(cfg *Config, analyzers []*dsl.Analyzer) []string {
 		}
 	}
 	return warns
-}
-
-func ruleHasDiagnose(analyzers []*dsl.Analyzer, ruleName string) bool {
-	for _, a := range analyzers {
-		for _, rule := range a.Rules {
-			if rule.Name == ruleName {
-				return rule.Diagnose != nil
-			}
-		}
-	}
-	return false
 }

@@ -61,9 +61,29 @@ func TestParseSuppressions(t *testing.T) {
 			want: map[int]suppression{3: {rules: map[string]bool{"go_iferr": true}}},
 		},
 		{
-			name: "multiline block comment — directive line is what matters",
+			name: "multiline block comment: directive line is what matters",
 			src:  "package p\n\n/*\n * pasta:ignore foo\n */\nvar x = 1\n",
 			want: map[int]suppression{4: {rules: map[string]bool{"foo": true}}},
+		},
+		{
+			name: "no trailing newline",
+			src:  "package p\n\nvar x = 1 // pasta:ignore foo",
+			want: map[int]suppression{3: {rules: map[string]bool{"foo": true}}},
+		},
+		{
+			name: "two block comments on the same line both take effect",
+			src:  "package p\n\nvar x = 1 /* pasta:ignore foo */ /* pasta:ignore bar */\n",
+			want: map[int]suppression{3: {rules: map[string]bool{"foo": true, "bar": true}}},
+		},
+		{
+			name: "multiple directives in one comment do not bleed rule names",
+			src:  "package p\n\nvar x = 1 // pasta:ignore foo pasta:ignore bar\n",
+			want: map[int]suppression{3: {rules: map[string]bool{"foo": true, "bar": true}}},
+		},
+		{
+			name: "all-form merged with named-form on same line wins as all",
+			src:  "package p\n\nvar x = 1 /* pasta:ignore */ /* pasta:ignore foo */\n",
+			want: map[int]suppression{3: {all: true}},
 		},
 		{
 			name: "ignored prefix is not a directive",
@@ -80,7 +100,7 @@ func TestParseSuppressions(t *testing.T) {
 			want: nil,
 		},
 		{
-			name: "string literal with bare directive — same",
+			name: "string literal with bare directive: same",
 			src:  "package p\n\nvar s = \"pasta:ignore foo\"\n",
 			want: nil,
 		},

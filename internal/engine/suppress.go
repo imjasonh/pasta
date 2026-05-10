@@ -2,6 +2,7 @@ package engine
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/imjasonh/pasta/internal/effect"
 	"github.com/imjasonh/pasta/internal/tsutil"
@@ -16,18 +17,23 @@ type suppression struct {
 	rules map[string]bool
 }
 
-// ignoreRe finds `pasta:ignore` directives within a comment node's
-// text. We don't need to require a comment leader in the regex —
-// callers only invoke us against text already known to be a comment
-// (per the language's `comment_types`), so a string literal like
-// `log("user typed pasta:ignore go_iferr")` can never reach us. The
-// trailing capture holds whatever followed the directive on the same
-// line; rule names are extracted from it via nameRe so junk like
-// comment terminators (`*/`, `-->`) is naturally filtered out.
-var ignoreRe = regexp.MustCompile(`pasta:ignore\b([^\n]*)`)
+// directiveRe matches the `pasta:ignore` token itself (no tail). We
+// use FindAll positions and slice the tail manually — that way two
+// directives on the same line (`// pasta:ignore foo pasta:ignore bar`)
+// each get their own tail, instead of the first match greedily
+// consuming the rest of the line and leaking the literal words
+// `pasta` and `ignore` into the rule-name list.
+//
+// No comment-leader requirement: callers only invoke us against text
+// already known to be a comment (per the language's `comment_types`),
+// so a string literal like
+// `log("user typed pasta:ignore go_iferr")` can never reach us.
+var directiveRe = regexp.MustCompile(`pasta:ignore\b`)
 
-// nameRe matches an identifier — used to pluck rule names from the
+// nameRe matches an identifier — used to pluck rule names from a
 // directive's tail, which is a comma- or whitespace-separated list.
+// Junk like comment terminators (`*/`, `-->`) is naturally filtered
+// out because it doesn't match the identifier pattern.
 var nameRe = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
 
 // parseSuppressions walks the parsed tree and returns a map from
@@ -64,27 +70,34 @@ func parseSuppressions(root tsutil.Node, commentTypes map[string]bool) map[int]s
 			return true
 		}
 		scanComment(n, &out)
-		// Comments don't nest meaningfully; skipping descendants
-		// would also be fine, but Walk's default of "visit
-		// children" is harmless here (a comment's named children,
-		// if any, are not themselves comment nodes per any grammar
-		// we ship).
-		return true
+		// A comment's named children (if any) cannot themselves be
+		// comments under any grammar we ship, but skipping descent
+		// is the defensive choice — guarantees we never double-
+		// scan the same span.
+		return false
 	})
 	return out
 }
 
 func scanComment(n tsutil.Node, out *map[int]suppression) {
 	text := n.Text()
-	for _, m := range ignoreRe.FindAllStringSubmatchIndex(text, -1) {
-		// m[0] is the directive's start within `text`; absolute
-		// byte position lets us compute the source line.
-		line := effect.ComputeLine(n.Src, n.StartByte()+uint32(m[0]))
-		entry := parseSuppressionTail(text[m[2]:m[3]])
-		if *out == nil {
-			*out = map[int]suppression{}
+	starts := directiveRe.FindAllStringIndex(text, -1)
+	for i, m := range starts {
+		// Tail runs from the end of THIS directive to the start of
+		// the NEXT one, capped at the next newline. Slicing this
+		// way (instead of letting the regex's `.*` greedily eat
+		// the rest of the line) prevents a second `pasta:ignore`
+		// on the same line from being parsed as rule names.
+		tailStart := m[1]
+		tailEnd := len(text)
+		if i+1 < len(starts) {
+			tailEnd = starts[i+1][0]
 		}
-		(*out)[line] = entry
+		if nl := strings.IndexByte(text[tailStart:tailEnd], '\n'); nl >= 0 {
+			tailEnd = tailStart + nl
+		}
+		line := effect.ComputeLine(n.Src, n.StartByte()+uint32(m[0]))
+		addSuppression(out, line, parseSuppressionTail(text[tailStart:tailEnd]))
 	}
 }
 
@@ -98,6 +111,39 @@ func parseSuppressionTail(tail string) suppression {
 		rules[n] = true
 	}
 	return suppression{rules: rules}
+}
+
+// addSuppression merges incoming into out[line] rather than
+// overwriting. Two comment nodes on the same line each carrying a
+// directive — `/* pasta:ignore foo */ /* pasta:ignore bar */` — both
+// take effect after the merge.
+func addSuppression(out *map[int]suppression, line int, incoming suppression) {
+	if *out == nil {
+		*out = map[int]suppression{}
+	}
+	existing, ok := (*out)[line]
+	if !ok {
+		(*out)[line] = incoming
+		return
+	}
+	(*out)[line] = mergeSuppression(existing, incoming)
+}
+
+// mergeSuppression unions two suppression entries. `all` wins over
+// any rule list — once every rule on the line is suppressed, naming
+// individual ones adds nothing.
+func mergeSuppression(a, b suppression) suppression {
+	if a.all || b.all {
+		return suppression{all: true}
+	}
+	out := suppression{rules: make(map[string]bool, len(a.rules)+len(b.rules))}
+	for n := range a.rules {
+		out.rules[n] = true
+	}
+	for n := range b.rules {
+		out.rules[n] = true
+	}
+	return out
 }
 
 // isSuppressed reports whether rule is suppressed at the given 1-based

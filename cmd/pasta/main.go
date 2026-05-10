@@ -140,7 +140,7 @@ func runFix(args []string) int {
 // positional argument is an existing .cue file).
 //
 // Returns the loaded analyzers, the project config (nil for the
-// single-file form or when no config.cue is present), the remaining
+// single-file form or when no pasta.cue is present), the remaining
 // positional args to be treated as sources, and a process exit code
 // (0 = ok). Errors are printed to stderr.
 func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, *loader.Config, []string, int) {

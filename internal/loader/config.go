@@ -100,31 +100,87 @@ func validSeverity(s string) bool {
 	return false
 }
 
-// applyConfig mutates analyzers in place: drops rules whose name is
-// in DisabledRules and overrides Diagnose.Severity for any rule named
-// in Severity. Both are no-ops when the corresponding map/list is
-// empty, so callers can pass a possibly-nil Config.
-func applyConfig(cfg *Config, analyzers []*dsl.Analyzer) {
+// applyConfig mutates analyzers in place: drops rules listed in
+// DisabledRules and overrides Diagnose.Severity for rules listed in
+// Severity. Returns zero or more human-readable warnings for
+// configuration that didn't take effect:
+//
+//   - a name in DisabledRules that doesn't match any loaded rule
+//     (typo, or rule was removed upstream),
+//   - a key in Severity that doesn't match any loaded rule,
+//   - a key in Severity whose target rule has no `diagnose` block —
+//     overriding severity on a rewrite-only rule is meaningless and
+//     would otherwise cause the engine to emit empty-message
+//     diagnostics on every match.
+//
+// Callers (LoadDir) print these warnings to stderr. Both maps being
+// empty is a no-op, so callers can pass a possibly-nil Config.
+//
+// Rule identity is `rule.Name` — the loader (`tryDecodeAnalyzer`)
+// guarantees Name is set, defaulting to the map key when absent, so
+// matching against Name covers both authoring conventions.
+func applyConfig(cfg *Config, analyzers []*dsl.Analyzer) []string {
 	if cfg == nil {
-		return
+		return nil
 	}
+	// Index every rule across every analyzer first. We need this
+	// before we start mutating so the typo warnings don't fire
+	// against rules we just removed.
+	known := map[string]bool{}
+	for _, a := range analyzers {
+		for _, rule := range a.Rules {
+			known[rule.Name] = true
+		}
+	}
+
+	var warns []string
 	disabled := map[string]bool{}
 	for _, r := range cfg.DisabledRules {
 		disabled[r] = true
+		if !known[r] {
+			warns = append(warns, fmt.Sprintf("disabled_rules: rule %q is not loaded", r))
+		}
 	}
+	for r, sev := range cfg.Severity {
+		if !known[r] {
+			warns = append(warns, fmt.Sprintf("severity: rule %q is not loaded", r))
+			continue
+		}
+		if disabled[r] {
+			// User asked to disable it AND override its severity.
+			// The disable wins; surfacing both as no-ops would just
+			// be noise.
+			continue
+		}
+		if !ruleHasDiagnose(analyzers, r) {
+			warns = append(warns, fmt.Sprintf("severity: rule %q has no diagnose block; severity %q would not take effect", r, sev))
+		}
+	}
+
 	for _, a := range analyzers {
 		for name, rule := range a.Rules {
-			if disabled[rule.Name] || disabled[name] {
+			if disabled[rule.Name] {
 				delete(a.Rules, name)
 				continue
 			}
-			if sev, ok := cfg.Severity[rule.Name]; ok {
-				if rule.Diagnose == nil {
-					rule.Diagnose = &dsl.Diagnostic{}
-				}
-				rule.Diagnose.Severity = dsl.Severity(sev)
-				a.Rules[name] = rule
+			sev, ok := cfg.Severity[rule.Name]
+			if !ok || rule.Diagnose == nil {
+				continue
+			}
+			rule.Diagnose.Severity = dsl.Severity(sev)
+			a.Rules[name] = rule
+		}
+	}
+	return warns
+}
+
+func ruleHasDiagnose(analyzers []*dsl.Analyzer, ruleName string) bool {
+	for _, a := range analyzers {
+		for _, rule := range a.Rules {
+			if rule.Name == ruleName {
+				return rule.Diagnose != nil
 			}
 		}
 	}
+	return false
 }

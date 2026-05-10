@@ -13,11 +13,16 @@ type suppression struct {
 	rules map[string]bool
 }
 
-// ignoreRe finds `pasta:ignore` directives. The trailing capture group
+// ignoreRe finds `pasta:ignore` directives. The leading alternation
+// requires a comment leader (`//`, `#`, `--`, `/*`, `<!--`)
+// immediately before the directive — same set the want-marker scanner
+// in internal/runner uses. Anchoring on a comment leader rules out
+// false positives from string literals like
+// `log("user typed pasta:ignore go_iferr")`. The trailing capture
 // holds whatever followed the directive on the same line; rule names
 // are extracted from it via nameRe so junk like comment terminators
 // (`*/`, `-->`) is naturally filtered out.
-var ignoreRe = regexp.MustCompile(`pasta:ignore\b([^\n]*)`)
+var ignoreRe = regexp.MustCompile(`(?://|#|--|/\*|<!--)\s*pasta:ignore\b(.*)`)
 
 // nameRe matches an identifier — used to pluck rule names from the
 // directive's tail, which is a comma- or whitespace-separated list.

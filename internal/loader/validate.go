@@ -2,6 +2,7 @@ package loader
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,6 +13,23 @@ import (
 // rootCapture is bound by the engine on every match to the matched node
 // itself. Always considered "in scope" for capture validation.
 const rootCapture = "_root"
+
+// validateFileMatch checks every rule's `file_match` entry compiles
+// as a valid filepath.Match pattern. A bad pattern (e.g. unclosed
+// `[`) would otherwise silently make the rule never match — better
+// to surface it at load time. We probe by calling Match against a
+// sentinel; only ErrBadPattern matters.
+func validateFileMatch(a *dsl.Analyzer) error {
+	for _, ruleKey := range sortedKeys(a.Rules) {
+		r := a.Rules[ruleKey]
+		for _, pat := range r.FileMatch {
+			if _, err := filepath.Match(pat, ""); err != nil {
+				return fmt.Errorf("rule %q: file_match %q: %w", r.Name, pat, err)
+			}
+		}
+	}
+	return nil
+}
 
 // validateCaptures verifies that every capture reference in a's rules
 // resolves to a capture actually bound by the rule's match pattern.

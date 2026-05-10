@@ -34,7 +34,7 @@ type FileResult struct {
 // LoadRules loads every *.cue file in dir, returning all analyzers
 // found. Any language declarations present in the dir are registered
 // with internal/lang so subsequent file dispatch sees them. Project
-// config (`config.cue`) is applied transparently — disabled rules
+// config from `pasta.cue` is applied transparently — disabled rules
 // are dropped and severity overrides are baked in.
 func LoadRules(dir string) ([]*dsl.Analyzer, error) {
 	p, err := LoadProject(dir)
@@ -45,7 +45,7 @@ func LoadRules(dir string) ([]*dsl.Analyzer, error) {
 }
 
 // Project is everything LoadProject returns: the loaded analyzers and
-// the project's Config (nil when the directory has no config.cue).
+// the project's Config (nil when the directory has no pasta.cue).
 type Project struct {
 	Analyzers []*dsl.Analyzer
 	Config    *loader.Config

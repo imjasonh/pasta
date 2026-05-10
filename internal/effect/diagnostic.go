@@ -37,13 +37,20 @@ func BuildDiagnostic(rule string, dg *dsl.Diagnostic, anchor tsutil.Node, caps m
 		Severity:  dg.Severity,
 		StartByte: anchor.StartByte(),
 		EndByte:   anchor.EndByte(),
-		LineNum:   computeLine(anchor.Src, anchor.StartByte()),
+		LineNum:   ComputeLine(anchor.Src, anchor.StartByte()),
 	}
 }
 
-func computeLine(src []byte, pos uint32) int {
+// ComputeLine returns the 1-based line number of byte offset pos
+// within src. Used by BuildDiagnostic and by callers (engine) that
+// need the anchor line without first building a Diagnostic — e.g. to
+// check `pasta:ignore` suppression before deciding to emit anything.
+func ComputeLine(src []byte, pos uint32) int {
 	line := 1
-	for i := uint32(0); i < pos && int(i) < len(src); i++ {
+	if int(pos) > len(src) {
+		pos = uint32(len(src))
+	}
+	for i := uint32(0); i < pos; i++ {
 		if src[i] == '\n' {
 			line++
 		}

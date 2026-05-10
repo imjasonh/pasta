@@ -230,7 +230,7 @@ func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factsto
 			continue
 		}
 		diagAnchor := pickDiagAnchor(&rule, m)
-		if isSuppressed(suppress, rule.Name, anchorLine(diagAnchor)) {
+		if isSuppressed(suppress, rule.Name, effect.ComputeLine(diagAnchor.Src, diagAnchor.StartByte())) {
 			continue
 		}
 		if rule.Diagnose != nil {
@@ -256,24 +256,6 @@ func runRule(sr *scheduledRule, env *match.Env, root tsutil.Node, store *factsto
 		}
 	}
 	return nil
-}
-
-// anchorLine returns the 1-based line of n's start byte. Mirrors
-// effect.computeLine; duplicated here so the engine can do a
-// suppression check without first building a Diagnostic.
-func anchorLine(n tsutil.Node) int {
-	src := n.Src
-	pos := n.StartByte()
-	if int(pos) > len(src) {
-		pos = uint32(len(src))
-	}
-	line := 1
-	for i := uint32(0); i < pos; i++ {
-		if src[i] == '\n' {
-			line++
-		}
-	}
-	return line
 }
 
 // emitFacts records each fact declared in the rule's `emit` clause,

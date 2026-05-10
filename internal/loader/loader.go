@@ -32,7 +32,8 @@ var embeddedFS embed.FS
 
 // LoadResult is the parsed contents of one or more CUE files: zero or
 // more analyzers and zero or more language declarations, plus an
-// optional Config when the directory carried a config.cue.
+// optional Config when the directory's pasta.cue carried any config
+// fields (disabled_rules / severity / skip).
 type LoadResult struct {
 	Analyzers []*dsl.Analyzer
 	Languages []dsl.LanguageDecl
@@ -134,7 +135,9 @@ func LoadDir(dir string) (LoadResult, error) {
 	if err != nil {
 		return LoadResult{}, err
 	}
-	applyConfig(projectCfg, merged.Analyzers)
+	for _, w := range applyConfig(projectCfg, merged.Analyzers) {
+		fmt.Fprintf(os.Stderr, "pasta: %s\n", w)
+	}
 	merged.Config = projectCfg
 	return merged, nil
 }
@@ -596,6 +599,9 @@ func extractTopLevel(v cue.Value) (LoadResult, error) {
 
 		if a, ok := tryDecodeAnalyzer(val); ok {
 			if err := validateCaptures(a); err != nil {
+				return LoadResult{}, fmt.Errorf("analyzer %q: %w", a.Name, err)
+			}
+			if err := validateFileMatch(a); err != nil {
 				return LoadResult{}, fmt.Errorf("analyzer %q: %w", a.Name, err)
 			}
 			out.Analyzers = append(out.Analyzers, a)

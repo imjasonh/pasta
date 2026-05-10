@@ -59,6 +59,31 @@ func TestParseSuppressions(t *testing.T) {
 			src:  "x // pasta:ignore foo",
 			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
 		},
+		{
+			name: "string literal does not trigger",
+			src:  `log("user typed pasta:ignore go_iferr")` + "\n",
+			want: nil,
+		},
+		{
+			name: "string literal containing a fake comment leader still triggers (known limitation)",
+			// Plain text scan; we don't tokenize per language. A
+			// string that itself contains `//` gets treated like a
+			// real comment. Documented limitation — the common case
+			// (string with bare `pasta:ignore`) is already excluded
+			// by the comment-leader requirement.
+			src:  `s := "// pasta:ignore foo"` + "\n",
+			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
+		},
+		{
+			name: "comment leader directly adjacent (no space)",
+			src:  "//pasta:ignore foo\n",
+			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
+		},
+		{
+			name: "no comment leader is not a directive",
+			src:  "pasta:ignore foo\n",
+			want: nil,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

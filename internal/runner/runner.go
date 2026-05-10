@@ -58,27 +58,66 @@ func LoadRule(path string) (*dsl.Analyzer, error) {
 // RunFile parses src as the language inferred from path's extension,
 // runs every analyzer over it, and returns a FileResult. If applyFixes
 // is true, edits are applied and Fixed is populated.
+//
+// RunFile is a thin wrapper around RunGroup with a one-element file
+// slice. Use RunGroup directly when you have multiple files that
+// should share a fact store.
 func RunFile(ctx context.Context, path string, src []byte, analyzers []*dsl.Analyzer, applyFixes bool) (FileResult, error) {
-	ext := filepath.Ext(path)
-	l, ok := lang.ByExt(ext)
-	if !ok {
-		return FileResult{Path: path}, fmt.Errorf("no language registered for %q", ext)
-	}
-	res, err := engine.Run(ctx, src, l, analyzers)
+	res, err := RunGroup(ctx, []FileSpec{{Path: path, Src: src}}, analyzers, applyFixes)
 	if err != nil {
 		return FileResult{Path: path}, err
 	}
-	out := FileResult{
-		Path:        path,
-		Diagnostics: res.Diagnostics,
-		Ops:         res.Ops,
+	if len(res) == 0 {
+		return FileResult{Path: path}, nil
 	}
-	if applyFixes {
-		fixed, err := apply.Apply(src, res.Ops, dsl.RewriteOpts{})
-		if err != nil {
-			return out, fmt.Errorf("apply: %w", err)
+	return res[0], nil
+}
+
+// FileSpec is one file to feed to RunGroup. Path's extension drives
+// language dispatch; Src is the source bytes.
+type FileSpec struct {
+	Path string
+	Src  []byte
+}
+
+// RunGroup runs every analyzer over all files in spec as one analysis
+// group: a single fact store is shared across files, so a fact emitted
+// in one file is visible to rules running on another. Returns one
+// FileResult per spec, positionally aligned.
+//
+// If applyFixes is true each result's Fixed is populated by applying
+// that file's ops to its source.
+func RunGroup(ctx context.Context, specs []FileSpec, analyzers []*dsl.Analyzer, applyFixes bool) ([]FileResult, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	inputs := make([]engine.FileInput, 0, len(specs))
+	for _, s := range specs {
+		ext := filepath.Ext(s.Path)
+		l, ok := lang.ByExt(ext)
+		if !ok {
+			return nil, fmt.Errorf("%s: no language registered for %q", s.Path, ext)
 		}
-		out.Fixed = fixed
+		inputs = append(inputs, engine.FileInput{FileID: s.Path, Src: s.Src, Lang: l})
+	}
+	results, err := engine.RunGroup(ctx, inputs, analyzers)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FileResult, len(specs))
+	for i, s := range specs {
+		out[i] = FileResult{
+			Path:        s.Path,
+			Diagnostics: results[i].Diagnostics,
+			Ops:         results[i].Ops,
+		}
+		if applyFixes {
+			fixed, err := apply.Apply(s.Src, results[i].Ops, dsl.RewriteOpts{})
+			if err != nil {
+				return nil, fmt.Errorf("apply %s: %w", s.Path, err)
+			}
+			out[i].Fixed = fixed
+		}
 	}
 	return out, nil
 }
@@ -93,10 +132,17 @@ type TestReport struct {
 // Failed reports whether any failure was recorded.
 func (r TestReport) Failed() bool { return len(r.Failures) > 0 }
 
-// TestDir loads every *.cue rule in ruleDir, walks ruleDir/testdata
-// recursively, and validates each source file's diagnostics against
-// its `// want` markers and (if a `<file>.golden` exists) its fixed
-// output against the golden.
+// TestDir loads every *.cue rule in ruleDir, walks ruleDir/testdata,
+// and validates each source file's diagnostics against its `// want`
+// markers and (if a `<file>.golden` exists) its fixed output against
+// the golden.
+//
+// Source files at the top level of testdata/ are run as independent
+// single-file groups (each file gets a fresh fact store). Each
+// subdirectory of testdata/ is treated as ONE multi-file group: every
+// source file under that subdirectory (recursively) is run together,
+// sharing a single fact store. This lets cross-file analyzers be
+// tested with realistic multi-file inputs.
 //
 // Fails if testdata/ is missing or contains no source files mappable
 // to a registered language.
@@ -113,44 +159,117 @@ func TestDir(ctx context.Context, ruleDir string) (TestReport, error) {
 		return report, fmt.Errorf("%s: testdata directory missing", ruleDir)
 	}
 
-	var sources []string
-	err = filepath.WalkDir(testdata, func(p string, d fs.DirEntry, err error) error {
+	groups, err := discoverTestGroups(testdata)
+	if err != nil {
+		return report, err
+	}
+	total := 0
+	for _, g := range groups {
+		total += len(g)
+	}
+	if total == 0 {
+		return report, fmt.Errorf("%s: no source files in testdata", ruleDir)
+	}
+	report.NumFiles = total
+
+	for _, paths := range groups {
+		runTestGroup(ctx, paths, analyzers, &report)
+	}
+	return report, nil
+}
+
+// discoverTestGroups returns one group of source-file paths per
+// "test unit" under testdata. Source files directly in testdata/
+// each become their own one-element group; each immediate
+// subdirectory becomes one group containing every source file under
+// it (recursively). Within and across groups, paths are sorted for
+// deterministic output.
+func discoverTestGroups(testdata string) ([][]string, error) {
+	entries, err := os.ReadDir(testdata)
+	if err != nil {
+		return nil, err
+	}
+	var groups [][]string
+	var topFiles []string
+	for _, e := range entries {
+		full := filepath.Join(testdata, e.Name())
+		if e.IsDir() {
+			files, err := collectSourceFiles(full)
+			if err != nil {
+				return nil, err
+			}
+			if len(files) > 0 {
+				groups = append(groups, files)
+			}
+			continue
+		}
+		if isTestSourceFile(e.Name()) {
+			topFiles = append(topFiles, full)
+		}
+	}
+	sort.Strings(topFiles)
+	for _, p := range topFiles {
+		groups = append(groups, []string{p})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i][0] < groups[j][0] })
+	return groups, nil
+}
+
+// collectSourceFiles walks dir and returns every source file (any
+// language pasta knows about) it finds, sorted. .golden files and
+// files of unknown languages are ignored.
+func collectSourceFiles(dir string) ([]string, error) {
+	var out []string
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
-		if strings.HasSuffix(p, ".golden") {
-			return nil
+		if isTestSourceFile(d.Name()) {
+			out = append(out, p)
 		}
-		ext := filepath.Ext(p)
-		if _, ok := lang.ByExt(ext); !ok {
-			return nil
-		}
-		sources = append(sources, p)
 		return nil
 	})
 	if err != nil {
-		return report, err
+		return nil, err
 	}
-	if len(sources) == 0 {
-		return report, fmt.Errorf("%s: no source files in testdata", ruleDir)
-	}
-	sort.Strings(sources)
-	report.NumFiles = len(sources)
+	sort.Strings(out)
+	return out, nil
+}
 
-	for _, p := range sources {
+// isTestSourceFile reports whether name looks like a testdata source
+// (recognized extension, not a .golden).
+func isTestSourceFile(name string) bool {
+	if strings.HasSuffix(name, ".golden") {
+		return false
+	}
+	ext := filepath.Ext(name)
+	_, ok := lang.ByExt(ext)
+	return ok
+}
+
+// runTestGroup runs analyzers over the group's files (sharing a fact
+// store) and validates each file's diagnostics + golden output.
+func runTestGroup(ctx context.Context, paths []string, analyzers []*dsl.Analyzer, report *TestReport) {
+	specs := make([]FileSpec, 0, len(paths))
+	for _, p := range paths {
 		src, err := os.ReadFile(p)
 		if err != nil {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", p, err))
-			continue
+			return
 		}
-		res, err := RunFile(ctx, p, src, analyzers, true)
-		if err != nil {
-			report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", p, err))
-			continue
-		}
+		specs = append(specs, FileSpec{Path: p, Src: src})
+	}
+	results, err := RunGroup(ctx, specs, analyzers, true)
+	if err != nil {
+		report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", paths[0], err))
+		return
+	}
+	for i, res := range results {
+		p := specs[i].Path
+		src := specs[i].Src
 		if msg := checkDiagnostics(src, res.Diagnostics); msg != "" {
 			report.Failures = append(report.Failures, fmt.Sprintf("%s: %s", p, msg))
 		}
@@ -167,7 +286,6 @@ func TestDir(ctx context.Context, ruleDir string) (TestReport, error) {
 			}
 		}
 	}
-	return report, nil
 }
 
 // wantRe matches a `want` directive in a comment of any common style.

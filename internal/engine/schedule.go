@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/imjasonh/pasta/internal/dsl"
-	"github.com/imjasonh/pasta/internal/lang"
 )
 
 // ruleGroup is one strongly-connected component of the rule dependency
@@ -16,20 +15,22 @@ type ruleGroup struct {
 	fixpoint bool
 }
 
-// scheduleGroups collects every rule applicable to language l, builds
+// scheduleGroups collects every rule across the given analyzers, builds
 // the dependency graph (provider rules -> consumer rules), finds SCCs
 // via Tarjan's algorithm, and returns the SCCs in topological order.
 //
 // SCCs of size 1 with no self-loop run once. SCCs of size 1 whose
 // Provides intersects Requires (or any SCC of size > 1) run as a
 // fixpoint group until convergence.
-func scheduleGroups(analyzers []*dsl.Analyzer, l lang.Language) ([]ruleGroup, error) {
+//
+// Language-applicability filtering is deliberately not done here:
+// the schedule is built once for an analysis run that may span
+// multiple files of multiple languages, and the engine filters per
+// file at execution time.
+func scheduleGroups(analyzers []*dsl.Analyzer) ([]ruleGroup, error) {
 	var all []scheduledRule
 	for _, a := range analyzers {
 		for name, rule := range a.Rules {
-			if !ruleAppliesToLanguage(&rule, l) {
-				continue
-			}
 			all = append(all, scheduledRule{analyzer: a, name: name, rule: rule})
 		}
 	}

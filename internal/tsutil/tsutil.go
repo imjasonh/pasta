@@ -13,10 +13,16 @@ import (
 // source bytes and language so the rest of pasta can call methods like
 // Type() / ChildByFieldName() without threading the language through
 // every call site.
+//
+// FileID identifies the source file the node belongs to. It's the
+// disambiguator used by the fact store when several files share a
+// single store (multi-file analysis groups). Single-file callers can
+// leave it empty.
 type Node struct {
-	N    *gts.Node
-	Src  []byte
-	Lang *gts.Language
+	N      *gts.Node
+	Src    []byte
+	Lang   *gts.Language
+	FileID string
 }
 
 // IsValid reports whether the node is non-nil.
@@ -57,7 +63,7 @@ func (n Node) NamedChildren() []Node {
 	c := n.N.NamedChildCount()
 	out := make([]Node, c)
 	for i := 0; i < c; i++ {
-		out[i] = Node{N: n.N.NamedChild(i), Src: n.Src, Lang: n.Lang}
+		out[i] = Node{N: n.N.NamedChild(i), Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 	}
 	return out
 }
@@ -67,7 +73,7 @@ func (n Node) AllChildren() []Node {
 	kids := n.N.Children()
 	out := make([]Node, len(kids))
 	for i, c := range kids {
-		out[i] = Node{N: c, Src: n.Src, Lang: n.Lang}
+		out[i] = Node{N: c, Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 	}
 	return out
 }
@@ -77,9 +83,9 @@ func (n Node) AllChildren() []Node {
 func (n Node) ChildByFieldName(fieldName string) Node {
 	c := n.N.ChildByFieldName(fieldName, n.Lang)
 	if c == nil {
-		return Node{Src: n.Src, Lang: n.Lang}
+		return Node{Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 	}
-	return Node{N: c, Src: n.Src, Lang: n.Lang}
+	return Node{N: c, Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 }
 
 // HasFieldName reports whether the node has any child with the given field
@@ -98,9 +104,9 @@ func (n Node) FieldNameForChildIdx(i int) string {
 func (n Node) Parent() Node {
 	p := n.N.Parent()
 	if p == nil {
-		return Node{Src: n.Src, Lang: n.Lang}
+		return Node{Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 	}
-	return Node{N: p, Src: n.Src, Lang: n.Lang}
+	return Node{N: p, Src: n.Src, Lang: n.Lang, FileID: n.FileID}
 }
 
 // HasError reports whether the subtree contains a parse error.
@@ -111,13 +117,16 @@ func (n Node) String() string { return n.N.SExpr(n.Lang) }
 
 // Parse parses src with the given gotreesitter language and returns the
 // tree and root Node. The caller must call tree.Release() when done.
-func Parse(ctx context.Context, lang *gts.Language, src []byte) (*gts.Tree, Node, error) {
+//
+// fileID disambiguates nodes from this parse from those of other files
+// in the same multi-file analysis group; pass "" for single-file usage.
+func Parse(ctx context.Context, lang *gts.Language, src []byte, fileID string) (*gts.Tree, Node, error) {
 	parser := gts.NewParser(lang)
 	tree, err := parser.Parse(src)
 	if err != nil {
 		return nil, Node{}, err
 	}
-	root := Node{N: tree.RootNode(), Src: src, Lang: lang}
+	root := Node{N: tree.RootNode(), Src: src, Lang: lang, FileID: fileID}
 	return tree, root, nil
 }
 

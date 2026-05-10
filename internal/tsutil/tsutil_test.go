@@ -9,7 +9,7 @@ import (
 
 func parseGo(t *testing.T, src string) (*gts.Tree, Node) {
 	t.Helper()
-	tree, root, err := Parse(t.Context(), grammars.GoLanguage(), []byte(src))
+	tree, root, err := Parse(t.Context(), grammars.GoLanguage(), []byte(src), "")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

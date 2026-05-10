@@ -1,5 +1,9 @@
-// Package engine runs analyzers over a parsed source tree, producing
+// Package engine runs analyzers over parsed source trees, producing
 // diagnostics and edit operations.
+//
+// Two entry points: Run for a single file (the historical API used by
+// many tests) and RunGroup for a set of files that share a fact store.
+// Run is a thin wrapper around RunGroup with a one-element file slice.
 package engine
 
 import (
@@ -14,10 +18,20 @@ import (
 	"github.com/imjasonh/pasta/internal/tsutil"
 )
 
-// Result is the output of running one or more analyzers over a source.
+// Result is the output of running one or more analyzers over a single
+// source file.
 type Result struct {
 	Diagnostics []effect.Diagnostic
 	Ops         []effect.Op
+}
+
+// FileInput describes one source file to run analyzers over as part of
+// a group. FileID disambiguates nodes from this file from nodes of
+// other files in the group; using the file path is fine.
+type FileInput struct {
+	FileID string
+	Src    []byte
+	Lang   lang.Language
 }
 
 // scheduledRule pairs a rule with the analyzer that owns it, so we can
@@ -36,75 +50,134 @@ type scheduledRule struct {
 const MaxFixpointIterations = 50
 
 // Run parses src with l's tree-sitter grammar, runs every applicable
-// rule across the given analyzers in topological order (with fixpoint
-// iteration for cyclic dependencies), and returns aggregated
-// diagnostics and edit ops.
+// rule across the given analyzers, and returns aggregated diagnostics
+// and edit ops for that one file.
 func Run(
 	ctx context.Context,
 	src []byte,
 	l lang.Language,
 	analyzers []*dsl.Analyzer,
 ) (Result, error) {
-	tree, root, err := tsutil.Parse(ctx, l.GetLanguage(), src)
-	if err != nil {
-		return Result{}, fmt.Errorf("parse: %w", err)
-	}
-	defer tree.Release()
-
-	store := factstore.New()
-	commentTypes := make(map[string]bool, len(l.CommentTypes))
-	for _, t := range l.CommentTypes {
-		commentTypes[t] = true
-	}
-	env := &match.Env{
-		StmtList:     l.StmtList,
-		Predicates:   match.DefaultRegistry(),
-		FactStore:    store,
-		CommentTypes: commentTypes,
-		Index:        match.BuildIndex(root),
-	}
-
-	groups, err := scheduleGroups(analyzers, l)
+	outs, err := RunGroup(ctx, []FileInput{{FileID: "", Src: src, Lang: l}}, analyzers)
 	if err != nil {
 		return Result{}, err
 	}
+	if len(outs) == 0 {
+		return Result{}, nil
+	}
+	return outs[0], nil
+}
 
-	var res Result
+// fileState is the parsed-and-prepared state for one file in a group.
+type fileState struct {
+	input FileInput
+	tree  releaser
+	root  tsutil.Node
+	env   *match.Env
+}
+
+// releaser is the subset of *gts.Tree we actually need (Release).
+type releaser interface{ Release() }
+
+// RunGroup parses every file in files, sharing a single fact store
+// across them, and returns one Result per file (positionally aligned
+// with files).
+//
+// The schedule is global across the union of all applicable rules.
+// For each topo group the engine walks the files; non-fixpoint groups
+// run once, fixpoint groups iterate emit-only until the fact store
+// stops growing and then do one final collection pass.
+func RunGroup(
+	ctx context.Context,
+	files []FileInput,
+	analyzers []*dsl.Analyzer,
+) ([]Result, error) {
+	if len(files) == 0 {
+		return nil, nil
+	}
+
+	store := factstore.New()
+	states := make([]fileState, 0, len(files))
+	results := make([]Result, len(files))
+
+	for _, f := range files {
+		tree, root, err := tsutil.Parse(ctx, f.Lang.GetLanguage(), f.Src, f.FileID)
+		if err != nil {
+			for _, s := range states {
+				s.tree.Release()
+			}
+			return nil, fmt.Errorf("parse %s: %w", f.FileID, err)
+		}
+		commentTypes := make(map[string]bool, len(f.Lang.CommentTypes))
+		for _, t := range f.Lang.CommentTypes {
+			commentTypes[t] = true
+		}
+		env := &match.Env{
+			StmtList:     f.Lang.StmtList,
+			Predicates:   match.DefaultRegistry(),
+			FactStore:    store,
+			CommentTypes: commentTypes,
+			Index:        match.BuildIndex(root),
+		}
+		states = append(states, fileState{input: f, tree: tree, root: root, env: env})
+	}
+	defer func() {
+		for _, s := range states {
+			s.tree.Release()
+		}
+	}()
+
+	groups, err := scheduleGroups(analyzers)
+	if err != nil {
+		return nil, err
+	}
+
 	for _, group := range groups {
 		if !group.fixpoint {
-			for _, sr := range group.rules {
-				if err := runRule(&sr, env, root, store, &res); err != nil {
-					return res, err
+			for i, s := range states {
+				if err := runGroupOnFile(group, s, store, &results[i]); err != nil {
+					return nil, err
 				}
 			}
 			continue
 		}
-		// Fixpoint: re-run the group's rules until the fact store
-		// stops growing or we hit the iteration cap. We DON'T
-		// accumulate diagnostics or edit ops within the fixpoint loop
-		// (only on the last iteration), to avoid duplicates: we run
-		// the group once with effect-collection disabled to drive the
-		// fact store to a fixed point, then once more to gather
-		// diagnostics and edits at the converged state.
+		// Fixpoint: re-run emit-only across all files until the store
+		// stops growing, then do one final collection pass on each
+		// file. We don't accumulate diagnostics or edit ops during the
+		// emit loop to avoid duplicates.
 		for iter := 0; iter < MaxFixpointIterations; iter++ {
 			before := store.Len()
-			for _, sr := range group.rules {
-				if err := runRule(&sr, env, root, store, nil); err != nil {
-					return res, err
+			for _, s := range states {
+				if err := runGroupOnFile(group, s, store, nil); err != nil {
+					return nil, err
 				}
 			}
 			if store.Len() == before {
 				break
 			}
 		}
-		// Final pass: gather effects with the converged fact store.
-		for _, sr := range group.rules {
-			if err := runRule(&sr, env, root, store, &res); err != nil {
-				return res, err
+		for i, s := range states {
+			if err := runGroupOnFile(group, s, store, &results[i]); err != nil {
+				return nil, err
 			}
 		}
 	}
-	return res, nil
+	return results, nil
+}
+
+// runGroupOnFile runs every rule in group that applies to s's language,
+// using s's parse tree and env. When collect is nil only facts are
+// emitted; when non-nil, diagnostics and edit ops are appended.
+func runGroupOnFile(group ruleGroup, s fileState, store *factstore.Store, collect *Result) error {
+	for _, sr := range group.rules {
+		if !ruleAppliesToLanguage(&sr.rule, s.input.Lang) {
+			continue
+		}
+		if err := runRule(&sr, s.env, s.root, store, collect); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runRule matches the rule, runs preconditions, and (if collect != nil)
@@ -179,10 +252,6 @@ func flattenPayload(p any, caps match.Captures) map[string]any {
 	return out
 }
 
-// scheduleRules collects every rule applicable to language l across all
-// analyzers and orders them topologically by requires/provides. A rule
-// that requires fact F runs after every rule that provides F (within
-// the same Run). Cycles error out — fixpoint groups are future work.
 // ruleAppliesToLanguage returns true if the rule's `languages` list
 // includes the given language by NAME or by GRAMMAR.
 func ruleAppliesToLanguage(rule *dsl.Rule, l lang.Language) bool {

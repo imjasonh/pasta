@@ -3,7 +3,23 @@ package engine
 import (
 	"reflect"
 	"testing"
+
+	"github.com/imjasonh/pasta/internal/tsutil"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+// parseGo parses src as Go and returns the root + a default comment-
+// types map. The grammar emits comment nodes as type "comment".
+func parseGo(t *testing.T, src string) (tsutil.Node, func()) {
+	t.Helper()
+	tree, root, err := tsutil.Parse(t.Context(), grammars.GoLanguage(), []byte(src), "test.go")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return root, func() { tree.Release() }
+}
+
+var goCommentTypes = map[string]bool{"comment": true}
 
 func TestParseSuppressions(t *testing.T) {
 	cases := []struct {
@@ -13,85 +29,85 @@ func TestParseSuppressions(t *testing.T) {
 	}{
 		{
 			name: "no directives",
-			src:  "x := 1\ny := 2\n",
+			src:  "package p\n\nvar x = 1\n",
 			want: nil,
 		},
 		{
 			name: "all-rules form",
-			src:  "x := 1 // pasta:ignore\n",
-			want: map[int]suppression{1: {all: true}},
+			src:  "package p\n\nvar x = 1 // pasta:ignore\n",
+			want: map[int]suppression{3: {all: true}},
 		},
 		{
 			name: "single rule",
-			src:  "x := 1 // pasta:ignore go_iferr\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"go_iferr": true}}},
+			src:  "package p\n\nvar x = 1 // pasta:ignore go_iferr\n",
+			want: map[int]suppression{3: {rules: map[string]bool{"go_iferr": true}}},
 		},
 		{
 			name: "multiple rules comma",
-			src:  "x := 1 // pasta:ignore go_iferr, go_negcmp\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"go_iferr": true, "go_negcmp": true}}},
+			src:  "package p\n\nvar x = 1 // pasta:ignore go_iferr, go_negcmp\n",
+			want: map[int]suppression{3: {rules: map[string]bool{"go_iferr": true, "go_negcmp": true}}},
 		},
 		{
 			name: "multiple lines",
-			src:  "a // pasta:ignore foo\nb\nc // pasta:ignore\n",
+			src:  "package p\n\n// pasta:ignore foo\nvar x = 1\nvar y = 2 // pasta:ignore\n",
 			want: map[int]suppression{
-				1: {rules: map[string]bool{"foo": true}},
-				3: {all: true},
+				3: {rules: map[string]bool{"foo": true}},
+				5: {all: true},
 			},
 		},
 		{
 			name: "block comment terminator stripped",
-			src:  "x /* pasta:ignore go_iferr */\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"go_iferr": true}}},
+			src:  "package p\n\nvar x = 1 /* pasta:ignore go_iferr */\n",
+			want: map[int]suppression{3: {rules: map[string]bool{"go_iferr": true}}},
 		},
 		{
-			name: "html comment terminator stripped",
-			src:  "<x/> <!-- pasta:ignore some_rule -->\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"some_rule": true}}},
+			name: "multiline block comment — directive line is what matters",
+			src:  "package p\n\n/*\n * pasta:ignore foo\n */\nvar x = 1\n",
+			want: map[int]suppression{4: {rules: map[string]bool{"foo": true}}},
 		},
 		{
 			name: "ignored prefix is not a directive",
-			src:  "// pasta:ignored go_iferr\n",
+			src:  "package p\n\n// pasta:ignored go_iferr\n",
 			want: nil,
 		},
 		{
-			name: "no trailing newline",
-			src:  "x // pasta:ignore foo",
-			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
-		},
-		{
-			name: "string literal does not trigger",
-			src:  `log("user typed pasta:ignore go_iferr")` + "\n",
+			name: "string literal containing the directive does NOT trigger",
+			// The whole point of using parsed comment nodes: a
+			// string literal that happens to contain `pasta:ignore`
+			// is a string node, not a comment node, so the scanner
+			// never sees it.
+			src:  "package p\n\nvar s = \"// pasta:ignore foo\"\n",
 			want: nil,
 		},
 		{
-			name: "string literal containing a fake comment leader still triggers (known limitation)",
-			// Plain text scan; we don't tokenize per language. A
-			// string that itself contains `//` gets treated like a
-			// real comment. Documented limitation — the common case
-			// (string with bare `pasta:ignore`) is already excluded
-			// by the comment-leader requirement.
-			src:  `s := "// pasta:ignore foo"` + "\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
-		},
-		{
-			name: "comment leader directly adjacent (no space)",
-			src:  "//pasta:ignore foo\n",
-			want: map[int]suppression{1: {rules: map[string]bool{"foo": true}}},
-		},
-		{
-			name: "no comment leader is not a directive",
-			src:  "pasta:ignore foo\n",
+			name: "string literal with bare directive — same",
+			src:  "package p\n\nvar s = \"pasta:ignore foo\"\n",
 			want: nil,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseSuppressions([]byte(tc.src))
+			root, release := parseGo(t, tc.src)
+			defer release()
+			got := parseSuppressions(root, goCommentTypes)
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("parseSuppressions(%q):\n  got:  %#v\n  want: %#v", tc.src, got, tc.want)
+				t.Errorf("parseSuppressions:\nsrc:\n%s\n  got:  %#v\n  want: %#v", tc.src, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseSuppressions_emptyCommentTypes(t *testing.T) {
+	// A language without declared comment types disables suppression
+	// entirely — better to be inert than to scan source bytes
+	// blindly.
+	root, release := parseGo(t, "package p\n\nvar x = 1 // pasta:ignore foo\n")
+	defer release()
+	if got := parseSuppressions(root, nil); got != nil {
+		t.Errorf("expected nil for empty commentTypes; got %#v", got)
+	}
+	if got := parseSuppressions(root, map[string]bool{}); got != nil {
+		t.Errorf("expected nil for empty commentTypes; got %#v", got)
 	}
 }
 
@@ -105,12 +121,12 @@ func TestIsSuppressed(t *testing.T) {
 		line int
 		want bool
 	}{
-		{"foo", 3, true},   // all wins
-		{"bar", 3, true},   // all wins
-		{"foo", 5, true},   // matches name
-		{"bar", 5, false},  // not in name set
-		{"foo", 99, false}, // line not present
-		{"foo", 0, false},  // edge
+		{"foo", 3, true},
+		{"bar", 3, true},
+		{"foo", 5, true},
+		{"bar", 5, false},
+		{"foo", 99, false},
+		{"foo", 0, false},
 	}
 	for _, tc := range cases {
 		got := isSuppressed(m, tc.rule, tc.line)
@@ -118,7 +134,6 @@ func TestIsSuppressed(t *testing.T) {
 			t.Errorf("isSuppressed(%q, line=%d) = %v, want %v", tc.rule, tc.line, got, tc.want)
 		}
 	}
-
 	if isSuppressed(nil, "foo", 1) {
 		t.Errorf("isSuppressed on nil map should be false")
 	}

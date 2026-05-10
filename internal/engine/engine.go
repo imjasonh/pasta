@@ -133,7 +133,7 @@ func RunGroup(
 			tree:     tree,
 			root:     root,
 			env:      env,
-			suppress: parseSuppressions(f.Src),
+			suppress: parseSuppressions(root, commentTypes),
 		})
 	}
 

@@ -203,13 +203,21 @@ a thin wrapper that just returns the Analyzers.
 
 ## Per-rule suppression
 
-`internal/engine/suppress.go` scans each source file for
-`pasta:ignore` directives at parse time and stashes a
-`map[int]suppression` on `fileState`. In `runRule`, after a rule
-matches, we compute the diagnostic anchor's line and skip both the
-diagnostic and the rewrite when the line is suppressed for that rule
-name. Fact emission still happens — facts are internal state and
-dropping them would distort downstream rules.
+`internal/engine/suppress.go` walks the parsed tree, visits every
+node whose Type() is in the language's `comment_types`, and scans
+each comment's text for `pasta:ignore` directives. The result —
+`map[int]suppression` keyed by 1-based source line — is stashed on
+`fileState`. In `runRule`, after a rule matches, we compute the
+diagnostic anchor's line and skip both the diagnostic and the
+rewrite when the line is suppressed for that rule name. Fact
+emission still happens — facts are internal state and dropping them
+would distort downstream rules.
+
+Restricting the scan to comment nodes (rather than text-scanning
+the whole file) means a string literal like
+`log("user typed pasta:ignore go_iferr")` cannot accidentally
+trigger suppression. Languages without declared `comment_types`
+silently get no suppression — better inert than scanning blind.
 
 Forms (any comment style is fine; pasta only looks at the text):
 

@@ -1,4 +1,4 @@
-// go_arith_parens flags arithmetic expressions whose operands are
+// arith_parens flags arithmetic expressions whose operands are
 // themselves unparenthesized arithmetic expressions, requiring the
 // programmer to parenthesize sub-expressions that rely on operator
 // precedence or associativity rules to evaluate the way they look.
@@ -7,8 +7,8 @@
 //
 //     args->endp - args->begin_argv + consume
 //
-// which evaluates left-to-right as `(endp - begin) + consume` per Go's
-// (and C's) associativity rules — but in many real-world reports the
+// which evaluates left-to-right as `(endp - begin) + consume` per the
+// C-family associativity rules — but in many real-world reports the
 // programmer intended `endp - (begin + consume)`. Forcing the parens
 // makes the chosen grouping explicit so reviewers and tools can see
 // it instead of having to mentally apply precedence tables.
@@ -18,23 +18,51 @@
 // meaning). If the result reads wrong, that's the bug surfacing — fix
 // it by hand.
 //
+// Cross-language: every C-family tree-sitter grammar uses
+// `binary_expression` with `left`/`right`/`operator` fields and the
+// operator child carries the literal token. The rule lists each
+// language explicitly rather than `["*"]` so we don't accidentally
+// fire on grammars where `binary_expression` means something else.
+//
 // Scope: arithmetic operators only — multiplicative
-// (`* / % << >> & &^`) and additive (`+ - | ^`). Comparison and
-// logical operators are out of scope; `a < b && c < d` reads cleanly
-// even without inner parens.
+// (`* / % << >> & &^`) and additive (`+ - | ^`) plus `**` for
+// languages that have it. Comparison and logical operators are out of
+// scope; their conventional usage rarely surprises readers. Operators
+// absent from a given language (Go's `&^` in C, JS's `**` in Java)
+// simply never appear in source so over-coverage is harmless.
 
-package go_arith_parens
+package arith_parens
 
 import (
 	"github.com/imjasonh/pasta/schema"
 	golang "github.com/imjasonh/pasta/lang/go"
+	clang "github.com/imjasonh/pasta/lang/c"
+	cpplang "github.com/imjasonh/pasta/lang/cpp"
+	javalang "github.com/imjasonh/pasta/lang/java"
+	jslang "github.com/imjasonh/pasta/lang/javascript"
+	tslang "github.com/imjasonh/pasta/lang/typescript"
+	rustlang "github.com/imjasonh/pasta/lang/rust"
+	phplang "github.com/imjasonh/pasta/lang/php"
 )
 
-// _arithOp matches the text of any binary arithmetic operator. Both
-// sides of an outer/inner pair are checked against this so the rule
-// stays out of comparison (`==`, `<`, ...) and logical (`&&`, `||`)
-// territory.
-_arithOp: "^([+\\-*/%&|^]|<<|>>|&\\^)$"
+// _arithOp matches the text of any binary arithmetic operator across
+// the C-family languages this rule covers. Both sides of an
+// outer/inner pair are checked against this so the rule stays out of
+// comparison (`==`, `<`, ...) and logical (`&&`, `||`) territory.
+_arithOp: "^([+\\-*/%&|^]|<<|>>|&\\^|\\*\\*)$"
+
+// _supportedLanguages is the set of grammars where `binary_expression`
+// has the field shape (`left`, `right`, `operator`) this rule expects.
+_supportedLanguages: [
+	golang.Name,
+	clang.Name,
+	cpplang.Name,
+	javalang.Name,
+	jslang.Name,
+	tslang.Name,
+	rustlang.Name,
+	phplang.Name,
+]
 
 // _arithRule emits a rule for one side (left or right) of the outer
 // binary expression. Splitting by side keeps each pattern shape
@@ -44,7 +72,7 @@ _arithRule: {
 	_side: "left" | "right"
 
 	out: {
-		languages: [golang.Name]
+		languages: _supportedLanguages
 		requires: []
 		provides: []
 
@@ -91,8 +119,8 @@ _arithRule: {
 	}
 }
 
-go_arith_parens: schema.#Analyzer & {
-	name:    "go_arith_parens"
+arith_parens: schema.#Analyzer & {
+	name:    "arith_parens"
 	version: "0.1.0"
 	doc:     "Require parentheses around nested arithmetic sub-expressions"
 	facts: {}

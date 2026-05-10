@@ -15,9 +15,7 @@
 // a single group with a shared fact store, so cross-file analyses see
 // facts from every file in the run.
 //
-// When `-fix` is set: a single literal source path writes fixed bytes
-// to stdout (so it can be piped); two or more files (or any `./...`
-// expansion) write fixed bytes back to each source file in place.
+// `-fix` rewrites every source file in place with its fixed bytes.
 package main
 
 import (
@@ -44,7 +42,7 @@ func main() {
 
 func runFix(args []string) int {
 	fs := flag.NewFlagSet("pasta", flag.ExitOnError)
-	fix := fs.Bool("fix", false, "apply suggested fixes and write the result to stdout")
+	fix := fs.Bool("fix", false, "apply suggested fixes by rewriting each source file in place")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -62,7 +60,7 @@ func runFix(args []string) int {
 		return 1
 	}
 
-	expanded, hadExpansion, err := expandSources(rawSources)
+	expanded, err := expandSources(rawSources)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
@@ -88,11 +86,6 @@ func runFix(args []string) int {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
-	// Single literal file with -fix writes to stdout (pipe-friendly,
-	// historical behavior). Multiple files or any `./...` expansion
-	// rewrites each source in place — there's no useful single-stream
-	// representation for a group of fixed files.
-	writeInPlace := *fix && (hadExpansion || len(specs) > 1)
 	for _, res := range results {
 		for _, d := range res.Diagnostics {
 			fmt.Fprintf(os.Stderr, "%s:%d: %s [%s]\n", res.Path, d.Line(), d.Message, d.Rule)
@@ -100,14 +93,10 @@ func runFix(args []string) int {
 		if !*fix {
 			continue
 		}
-		if writeInPlace {
-			if err := os.WriteFile(res.Path, res.Fixed, 0o644); err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", res.Path, err)
-				exit = 1
-			}
-			continue
+		if err := os.WriteFile(res.Path, res.Fixed, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", res.Path, err)
+			exit = 1
 		}
-		os.Stdout.Write(res.Fixed)
 	}
 	return exit
 }
@@ -116,23 +105,19 @@ func runFix(args []string) int {
 // An argument ending in `/...` (or the literal `./...` / `...`) is
 // expanded to every file under that directory whose extension maps
 // to a registered language; .golden files are excluded. Plain paths
-// pass through unchanged. The returned bool reports whether ANY
-// argument was an expansion — used to decide between in-place and
-// stdout output for -fix.
-func expandSources(args []string) ([]string, bool, error) {
+// pass through unchanged.
+func expandSources(args []string) ([]string, error) {
 	seen := map[string]bool{}
 	var out []string
-	hadExpansion := false
 	for _, a := range args {
 		if a == "..." || a == "./..." || strings.HasSuffix(a, "/...") {
-			hadExpansion = true
 			root := strings.TrimSuffix(a, "/...")
 			if root == "" || a == "..." {
 				root = "."
 			}
 			matches, err := walkSources(root)
 			if err != nil {
-				return nil, false, fmt.Errorf("expand %s: %w", a, err)
+				return nil, fmt.Errorf("expand %s: %w", a, err)
 			}
 			for _, p := range matches {
 				if !seen[p] {
@@ -148,7 +133,7 @@ func expandSources(args []string) ([]string, bool, error) {
 		}
 	}
 	sort.Strings(out)
-	return out, hadExpansion, nil
+	return out, nil
 }
 
 // walkSources walks root and returns every file with an extension

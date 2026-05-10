@@ -180,9 +180,7 @@ pasta path/to/rule.cue file.go [file.go ...]
 # whose extension doesn't map to a registered language are skipped.
 pasta path/to/rule.cue ./...
 
-# Apply suggested fixes.
-#   - Single literal source path: writes fixed bytes to stdout.
-#   - Multiple files or any `./...` expansion: rewrites each file in place.
+# Apply suggested fixes — rewrites each source file in place.
 pasta -fix path/to/rule.cue file.go
 pasta -fix path/to/rule.cue ./...
 

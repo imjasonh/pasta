@@ -1,0 +1,65 @@
+package a
+
+// The user's example: same-precedence subtraction-then-addition.
+// Tree-sitter parses left-to-right as `(endp - begin) + consume`,
+// which the auto-fix makes explicit. If the programmer wanted
+// `endp - (begin + consume)` they have to fix it by hand once the
+// parens surface the actual grouping.
+func slice(endp, begin, consume int) int {
+	return (endp - begin) + consume // want "parenthesize arithmetic sub-expression"
+}
+
+// Mixed precedence: `*` binds tighter than `+`, so the inner
+// multiplication is on the right.
+func mulAdd(a, b, c int) int {
+	return a + (b*c) // want "parenthesize arithmetic sub-expression"
+}
+
+// Same operator, repeated. Still flagged: a reader shouldn't have
+// to remember left-associativity to know which `+` runs first.
+func chain(a, b, c int) int {
+	return (a + b) + c // want "parenthesize arithmetic sub-expression"
+}
+
+// Already parenthesized — explicit grouping, no diagnostic.
+func explicitLeft(a, b, c int) int {
+	return (a - b) + c
+}
+
+func explicitRight(a, b, c int) int {
+	return a + (b * c)
+}
+
+// Comparison and logical operators are out of scope.
+func cmpAndLogic(a, b, c, d int) bool {
+	return a < b && c == d
+}
+
+func logicChain(a, b, c bool) bool {
+	return a && b || c
+}
+
+// Unary minus on the left is a unary_expression, not a
+// binary_expression — should not match.
+func unary(a, b int) int {
+	return -a + b
+}
+
+// Bitwise mixed precedence: `&` (mult-level) binds tighter than `|`
+// (add-level), so the inner is on the right.
+func bitwise(a, b, c uint) uint {
+	return a | (b&c) // want "parenthesize arithmetic sub-expression"
+}
+
+// Shift has higher precedence than addition, so the right operand
+// is the binary `b << 1`.
+func shiftAdd(a, b uint) uint {
+	return a + (b<<1) // want "parenthesize arithmetic sub-expression"
+}
+
+// Three-deep nesting. Tree: `((a + (b * c)) - d)`. Both the outer
+// `-` (left side) and the inner `+` (right side) match, producing
+// nested parens after the fix.
+func threeDeep(a, b, c, d int) int {
+	return (a + (b*c)) - d // want "parenthesize arithmetic sub-expression" // want "parenthesize arithmetic sub-expression"
+}

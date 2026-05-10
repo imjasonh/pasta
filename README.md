@@ -178,9 +178,14 @@ pasta path/to/rule.cue file.go [file.go ...]
 # Run a rule against EVERY source file under a directory, recursively.
 # `./...` is the current dir; `pkg/...` is `pkg/` and below. Files
 # whose extension doesn't map to a registered language are skipped.
+# `.git`, `vendor`, and `node_modules` are skipped by default; use
+# `-skip` with a comma-separated list to add more (e.g. `dist,build`).
 pasta path/to/rule.cue ./...
+pasta -skip dist,build path/to/rule.cue ./...
 
 # Apply suggested fixes — rewrites each source file in place.
+# Files whose fixed bytes match the input are left untouched (mtime
+# unchanged), so re-running on a clean tree is a no-op.
 pasta -fix path/to/rule.cue file.go
 pasta -fix path/to/rule.cue ./...
 

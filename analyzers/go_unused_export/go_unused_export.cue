@@ -14,9 +14,13 @@
 //
 // Limitations (same as go_errcheck): the by-name lookup is
 // scope-blind. A local function shadowing a package-level name will
-// share facts. For a demo of cross-file analysis that's fine; for a
-// production unused-exports linter you'd want scope-aware fact keys
-// (see future-work.md).
+// share facts. The matcher also only records BARE-identifier callees
+// (`Foo()`); selector calls like `pkg.Foo()` and method calls like
+// `obj.Foo()` are not tracked, so an exported `Foo` reached only
+// through those forms would be reported as unused. For a demo of
+// cross-file analysis that's fine; for a production unused-exports
+// linter you'd want scope-aware fact keys plus selector-aware call
+// matching (see future-work.md).
 
 package go_unused_export
 

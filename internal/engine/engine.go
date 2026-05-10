@@ -100,12 +100,19 @@ func RunGroup(
 	states := make([]fileState, 0, len(files))
 	results := make([]Result, len(files))
 
+	// Register the release defer up front so a parse failure mid-loop
+	// still cleans up the trees we already parsed — `states` is the
+	// closed-over slice, so anything appended before the failure is
+	// covered.
+	defer func() {
+		for _, s := range states {
+			s.tree.Release()
+		}
+	}()
+
 	for _, f := range files {
 		tree, root, err := tsutil.Parse(ctx, f.Lang.GetLanguage(), f.Src, f.FileID)
 		if err != nil {
-			for _, s := range states {
-				s.tree.Release()
-			}
 			return nil, fmt.Errorf("parse %s: %w", f.FileID, err)
 		}
 		commentTypes := make(map[string]bool, len(f.Lang.CommentTypes))
@@ -121,11 +128,6 @@ func RunGroup(
 		}
 		states = append(states, fileState{input: f, tree: tree, root: root, env: env})
 	}
-	defer func() {
-		for _, s := range states {
-			s.tree.Release()
-		}
-	}()
 
 	groups, err := scheduleGroups(analyzers)
 	if err != nil {

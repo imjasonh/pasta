@@ -264,7 +264,10 @@ func runTestGroup(ctx context.Context, paths []string, analyzers []*dsl.Analyzer
 	}
 	results, err := RunGroup(ctx, specs, analyzers, true)
 	if err != nil {
-		report.Failures = append(report.Failures, fmt.Sprintf("%s: %v", paths[0], err))
+		// engine errors already include the offending file's id, so
+		// don't bolt paths[0] in front — that would misattribute a
+		// failure on file N as a failure on file 1.
+		report.Failures = append(report.Failures, err.Error())
 		return
 	}
 	for i, res := range results {

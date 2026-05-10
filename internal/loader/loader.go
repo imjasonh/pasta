@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -61,53 +62,72 @@ func LoadDir(dir string) (LoadResult, error) {
 	// drop it from the rule list (it's vendored into the overlay
 	// separately by buildOverlay).
 	matches = filterManifest(matches)
-	if len(matches) == 0 {
-		return LoadResult{}, fmt.Errorf("no *.cue files in %s", dir)
-	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return LoadResult{}, err
 	}
-	overlay, err := buildOverlay(abs, "")
+	overlay, remoteDirs, err := buildOverlay(abs, "")
 	if err != nil {
 		return LoadResult{}, err
+	}
+	if len(matches) == 0 && len(remoteDirs) == 0 {
+		// A rule directory with neither local files nor a manifest
+		// listing remote modules has nothing to load. (A directory
+		// with only a manifest IS valid — its rules come entirely
+		// from auto-enrolled remote modules.)
+		return LoadResult{}, fmt.Errorf("no *.cue files in %s", dir)
 	}
 	cfg := &load.Config{
 		Dir:     abs,
 		Overlay: overlay,
 	}
-	// Pass each absolute file path to load.Instances.
-	absFiles := make([]string, len(matches))
-	for i, m := range matches {
-		af, err := filepath.Abs(m)
-		if err != nil {
-			return LoadResult{}, err
-		}
-		absFiles[i] = af
-	}
-	insts := load.Instances(absFiles, cfg)
 
-	var out LoadResult
-	for _, inst := range insts {
-		if inst.Err != nil {
-			return LoadResult{}, fmt.Errorf("load %s: %s", inst.Dir, cueErrDetails(inst.Err))
+	var local LoadResult
+	if len(matches) > 0 {
+		// Pass each absolute file path to load.Instances.
+		absFiles := make([]string, len(matches))
+		for i, m := range matches {
+			af, err := filepath.Abs(m)
+			if err != nil {
+				return LoadResult{}, err
+			}
+			absFiles[i] = af
 		}
-		ctx := cuecontext.New()
-		v := ctx.BuildInstance(inst)
-		if err := v.Err(); err != nil {
-			return LoadResult{}, fmt.Errorf("build %s: %s", inst.Dir, cueErrDetails(err))
+		insts := load.Instances(absFiles, cfg)
+		for _, inst := range insts {
+			if inst.Err != nil {
+				return LoadResult{}, fmt.Errorf("load %s: %s", inst.Dir, cueErrDetails(inst.Err))
+			}
+			ctx := cuecontext.New()
+			v := ctx.BuildInstance(inst)
+			if err := v.Err(); err != nil {
+				return LoadResult{}, fmt.Errorf("build %s: %s", inst.Dir, cueErrDetails(err))
+			}
+			if err := v.Validate(cue.Concrete(true)); err != nil {
+				return LoadResult{}, fmt.Errorf("validate %s: %s", inst.Dir, cueErrDetails(err))
+			}
+			extracted, err := extractTopLevel(v)
+			if err != nil {
+				return LoadResult{}, err
+			}
+			local.Analyzers = append(local.Analyzers, extracted.Analyzers...)
+			local.Languages = append(local.Languages, extracted.Languages...)
 		}
-		if err := v.Validate(cue.Concrete(true)); err != nil {
-			return LoadResult{}, fmt.Errorf("validate %s: %s", inst.Dir, cueErrDetails(err))
-		}
-		extracted, err := extractTopLevel(v)
-		if err != nil {
-			return LoadResult{}, err
-		}
-		out.Analyzers = append(out.Analyzers, extracted.Analyzers...)
-		out.Languages = append(out.Languages, extracted.Languages...)
 	}
-	return out, nil
+
+	// Auto-enroll analyzers from every imported remote module. This
+	// is what lets a project publish ready-to-run rules: a consumer
+	// that lists the module in pasta.cue gets every top-level
+	// analyzer it exports as if those rules lived in .pasta/.
+	fromRemote, err := loadRemoteAnalyzers(abs, remoteDirs, overlay)
+	if err != nil {
+		return LoadResult{}, err
+	}
+	merged, err := mergeAnalyzers(local, fromRemote)
+	if err != nil {
+		return LoadResult{}, err
+	}
+	return merged, nil
 }
 
 // cueErrDetails formats a CUE error with full per-position detail.
@@ -176,11 +196,13 @@ func loadBytes(src []byte, virtualPath string) (LoadResult, error) {
 
 // buildCUE runs the overlay → load → build → validate pipeline on
 // src placed at virtualPath, returning a CUE value ready for decoding.
-// All five callers (LoadDir, loadPath, LoadLang, loadBytes, ...)
-// share this rather than re-implementing the pipeline.
+// Used by loadPath, LoadLang, loadBytes, and tests. Single-file
+// callers don't auto-enroll remote-module analyzers — that's a
+// LoadDir-only convenience — but the overlay still vendors any
+// declared remote modules so explicit `import` statements resolve.
 func buildCUE(src []byte, virtualPath string) (cue.Value, error) {
 	workDir := filepath.Dir(virtualPath)
-	overlay, err := buildOverlay(workDir, virtualPath)
+	overlay, _, err := buildOverlay(workDir, virtualPath)
 	if err != nil {
 		return cue.Value{}, err
 	}
@@ -225,7 +247,13 @@ func loadPath(path string) (LoadResult, error) {
 // (resolved via the lockfile + cache) is also vendored under
 // <userDir>/cue.mod/pkg/<modulePath>/, so user rules can import them
 // the same way they import the built-in module.
-func buildOverlay(userDir, userFile string) (map[string]load.Source, error) {
+//
+// Returns the overlay plus a map of modulePath → on-disk cache dir
+// for every remote module brought in (empty when no manifest). Only
+// LoadDir consumes the dirs map — it auto-enrolls every analyzer
+// found under those dirs as a runnable rule, so a project can list
+// `imports` and have those rules just work without per-rule glue.
+func buildOverlay(userDir, userFile string) (map[string]load.Source, map[string]string, error) {
 	overlay := map[string]load.Source{}
 
 	// Synthesize a minimal cue.mod/module.cue if the user's directory
@@ -237,7 +265,7 @@ func buildOverlay(userDir, userFile string) (map[string]load.Source, error) {
 language: version: "v0.13.0"
 `)
 	} else if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", userMod, err)
+		return nil, nil, fmt.Errorf("stat %s: %w", userMod, err)
 	}
 
 	// Vendor github.com/imjasonh/pasta: walk embedded cuemod/ and place each file at
@@ -260,14 +288,15 @@ language: version: "v0.13.0"
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Vendor any remote modules declared in pasta.cue. Resolution
 	// goes through the lockfile + on-disk cache; no fetching here.
 	// Loading errors out cleanly if the user hasn't run `pasta sync`.
-	if err := vendorRemoteModules(userDir, overlay); err != nil {
-		return nil, err
+	remoteDirs, err := vendorRemoteModules(userDir, overlay)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// If the user's CUE file is anonymous (no package), the loader needs
@@ -275,38 +304,40 @@ language: version: "v0.13.0"
 	// has the file on disk so no extra entry is needed.
 	_ = userFile
 
-	return overlay, nil
+	return overlay, remoteDirs, nil
 }
 
-// vendorRemoteModules reads dir/pasta.cue + dir/pasta.lock and copies
+// vendorRemoteModules reads dir/pasta.cue + dir/pasta.lock, copies
 // each cached module's files into overlay under
-// <dir>/cue.mod/pkg/<modulePath>/. No network access — fetching
-// happens out of band via `pasta sync`. The fetcher is obtained from
+// <dir>/cue.mod/pkg/<modulePath>/, and returns the modulePath →
+// on-disk cache dir map so the caller can also enroll the modules'
+// analyzers as rules. No network access — fetching happens out of
+// band via `pasta sync`. The fetcher is obtained from
 // newDefaultFetcher (a package var) so tests can swap in a fake
 // without going through DefaultCacheDir.
-func vendorRemoteModules(dir string, overlay map[string]load.Source) error {
+func vendorRemoteModules(dir string, overlay map[string]load.Source) (map[string]string, error) {
 	manifest, ok, err := remote.LoadManifest(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok || len(manifest.Modules) == 0 {
-		return nil
+		return nil, nil
 	}
 	lf, ok, err := remote.LoadLockfile(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !ok {
-		return fmt.Errorf("%s/%s declares remote imports but %s is missing; run `pasta sync %s`",
+		return nil, fmt.Errorf("%s/%s declares remote imports but %s is missing; run `pasta sync %s`",
 			dir, remote.ManifestFile, remote.LockFile, dir)
 	}
 	f, err := newDefaultFetcher()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dirs, err := remote.VendorDirs(manifest, lf, f)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for modPath, modDir := range dirs {
 		err := filepath.WalkDir(modDir, func(p string, d fs.DirEntry, walkErr error) error {
@@ -329,10 +360,10 @@ func vendorRemoteModules(dir string, overlay map[string]load.Source) error {
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("vendor %s: %w", modPath, err)
+			return nil, fmt.Errorf("vendor %s: %w", modPath, err)
 		}
 	}
-	return nil
+	return dirs, nil
 }
 
 // newDefaultFetcher returns the production GitFetcher pointed at the
@@ -357,6 +388,154 @@ func filterManifest(paths []string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// loadRemoteAnalyzers walks each vendored remote module dir, loads
+// every CUE package within, and returns the analyzers + language
+// declarations it finds. Subdirectories named `cue.mod` (CUE module
+// metadata) and `pasta.cue` files (pasta manifests, not rules) are
+// skipped. Each subdirectory containing `*.cue` files is loaded as
+// one CUE package, mirroring how LoadDir treats the local rule dir.
+//
+// remoteDirs is the modulePath → cache-dir map returned by
+// vendorRemoteModules; overlay is the same map passed to that call
+// so CUE can resolve cross-module imports during the package builds.
+func loadRemoteAnalyzers(userDir string, remoteDirs map[string]string, overlay map[string]load.Source) (LoadResult, error) {
+	var out LoadResult
+	// Iterate in sorted order so error messages and duplicate-detection
+	// are deterministic.
+	paths := make([]string, 0, len(remoteDirs))
+	for p := range remoteDirs {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, modPath := range paths {
+		modDir := remoteDirs[modPath]
+		// Find every distinct subdirectory (relative to modDir) that
+		// contains *.cue files. Each becomes one CUE package that
+		// we load by its import path. Loading by import path
+		// requires cfg.Dir to be the userDir (which has the
+		// synthesized cue.mod/module.cue); cfg.Dir = pkgDir confuses
+		// CUE because cue.mod/pkg/<...> isn't itself a module root.
+		pkgRels := map[string]bool{}
+		err := filepath.WalkDir(modDir, func(p string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if d.IsDir() {
+				// Skip a remote module's own cue.mod (its module
+				// metadata). We're scanning for rules, not for
+				// nested CUE module config.
+				if d.Name() == "cue.mod" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			name := d.Name()
+			if name == remote.ManifestFile {
+				return nil
+			}
+			if !strings.HasSuffix(name, ".cue") {
+				return nil
+			}
+			rel, err := filepath.Rel(modDir, filepath.Dir(p))
+			if err != nil {
+				return err
+			}
+			pkgRels[filepath.ToSlash(rel)] = true
+			return nil
+		})
+		if err != nil {
+			return LoadResult{}, fmt.Errorf("scan %s: %w", modPath, err)
+		}
+		rels := make([]string, 0, len(pkgRels))
+		for r := range pkgRels {
+			rels = append(rels, r)
+		}
+		sort.Strings(rels)
+		for _, rel := range rels {
+			importPath := modPath
+			if rel != "." {
+				importPath = modPath + "/" + rel
+			}
+			cfg := &load.Config{Dir: userDir, Overlay: overlay}
+			insts := load.Instances([]string{importPath}, cfg)
+			for _, inst := range insts {
+				if inst.Err != nil {
+					return LoadResult{}, fmt.Errorf("load %s: %s", importPath, cueErrDetails(inst.Err))
+				}
+				ctx := cuecontext.New()
+				v := ctx.BuildInstance(inst)
+				if err := v.Err(); err != nil {
+					return LoadResult{}, fmt.Errorf("build %s: %s", importPath, cueErrDetails(err))
+				}
+				// Deliberately skip Validate(Concrete(true)): a
+				// remote module may legitimately export incomplete
+				// helpers (recipe templates, partial schemas) next
+				// to fully-concrete analyzers. extractTopLevel +
+				// tryDecodeAnalyzer already filter out anything
+				// that doesn't marshal to a valid Analyzer JSON, so
+				// incomplete fields are silently skipped here
+				// instead of erroring.
+				extracted, err := extractTopLevel(v)
+				if err != nil {
+					return LoadResult{}, err
+				}
+				// Tag each analyzer with its source module so
+				// merge-time collision messages can point at the
+				// right place. Source is otherwise unused.
+				for _, a := range extracted.Analyzers {
+					a.Source = modPath
+				}
+				out.Analyzers = append(out.Analyzers, extracted.Analyzers...)
+				out.Languages = append(out.Languages, extracted.Languages...)
+			}
+		}
+	}
+	return out, nil
+}
+
+// mergeAnalyzers combines local and remote LoadResults into one.
+// Naming policy:
+//   - Local analyzers always take precedence: a local analyzer with
+//     the same name as a remote one wins, and we print a warning to
+//     stderr so the user knows the remote version was suppressed.
+//     This lets projects patch a remote rule without forking the
+//     module.
+//   - Two remote analyzers with the same name (from different
+//     modules) is an error — there's no principled way for us to
+//     pick a winner, and silently dropping one would surprise either
+//     publisher.
+//   - Two analyzers with the same name from the SAME remote module
+//     is also an error (the publisher messed up).
+//
+// Languages are concatenated as-is; the lang registry already
+// rejects duplicates at registration time.
+func mergeAnalyzers(local, remote LoadResult) (LoadResult, error) {
+	out := LoadResult{Languages: append(local.Languages, remote.Languages...)}
+	// Index local analyzers by name so collisions are O(1) to
+	// detect. Local analyzers retain insertion order in the output.
+	localByName := map[string]bool{}
+	for _, a := range local.Analyzers {
+		localByName[a.Name] = true
+		out.Analyzers = append(out.Analyzers, a)
+	}
+	// Track which remote module first contributed each name so we
+	// can produce a useful error on inter-module collision.
+	remoteByName := map[string]string{}
+	for _, a := range remote.Analyzers {
+		if localByName[a.Name] {
+			fmt.Fprintf(os.Stderr, "pasta: local analyzer %q overrides remote one from %s\n", a.Name, a.Source)
+			continue
+		}
+		if prev, ok := remoteByName[a.Name]; ok {
+			return LoadResult{}, fmt.Errorf("analyzer name collision: %q is exported by both %s and %s; rename one or stop importing the other",
+				a.Name, prev, a.Source)
+		}
+		remoteByName[a.Name] = a.Source
+		out.Analyzers = append(out.Analyzers, a)
+	}
+	return out, nil
 }
 
 // extractTopLevel iterates non-definition top-level fields of v and

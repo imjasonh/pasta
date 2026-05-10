@@ -24,6 +24,13 @@ type Analyzer struct {
 	Doc     string          `json:"doc,omitempty"`
 	Facts   map[string]Fact `json:"facts,omitempty"`
 	Rules   map[string]Rule `json:"rules"`
+
+	// Source is set by the loader to the module path the analyzer
+	// came from (e.g. "github.com/alice/security-rules") when it was
+	// auto-enrolled from a remote import. Empty for analyzers
+	// declared in the project's own .pasta/. Used for diagnostic
+	// messages on name collisions; never serialized.
+	Source string `json:"-"`
 }
 
 // Fact is the type-level declaration of a fact kind.

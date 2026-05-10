@@ -189,8 +189,29 @@ commit SHA via `git ls-remote`, fetches the module into
 `$XDG_CACHE_HOME/pasta/modules/<path>@<commit>/`, and writes a
 `pasta.lock` next to the manifest. Subsequent loads are offline as
 long as the lock matches the manifest and the cache still holds the
-locked commit. Rules then import the module like any other CUE
-package — `import "github.com/alice/lint-rules/<subpath>"`.
+locked commit (and its content hash still matches; tampering is a
+hard error).
+
+Two ways to consume a remote module:
+
+1. **Auto-enroll**: by default, every top-level analyzer in every
+   imported module is loaded as if it lived in `.pasta/`. A
+   `.pasta/` containing only a manifest + lockfile is valid — its
+   rules come entirely from the imports.
+
+2. **Explicit import**: a local `.cue` file can also `import
+   "github.com/alice/lint-rules/<subpath>"` and reference values
+   from it (helpers, recipes, partial analyzers). Useful for
+   composing rather than running verbatim.
+
+Naming policy at merge time (loader.go:`mergeAnalyzers`):
+- Local analyzer with the same name as a remote one → local wins,
+  stderr warning. Lets projects patch a remote rule without forking.
+- Two remote analyzers with the same name → hard error. No
+  principled way to pick a winner.
+- Remote modules can suppress auto-enrollment of helpers by making
+  them definitions (`#Recipe` instead of `Recipe`) — `extractTopLevel`
+  iterates with `cue.Definitions(false)`.
 
 v1 limits: flat deps only (a remote module's own `pasta.cue` with
 non-empty `imports` is a hard error during sync); the version string

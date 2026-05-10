@@ -150,6 +150,226 @@ func TestLoadDirRejectsManifestWithoutLockfile(t *testing.T) {
 	}
 }
 
+// stageRemoteModule writes a single-file CUE package on disk and
+// returns its directory. Tests pass that directory through the fake
+// fetcher to make it look like a fetched remote module.
+func stageRemoteModule(t *testing.T, pkg, file, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, file), []byte("package "+pkg+"\n\n"+src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// writeManifestAndLock writes a .pasta-style manifest + matching
+// hash-locked lockfile into dir. Returns nothing — the caller's only
+// observable is that LoadDir(dir) now resolves the listed module.
+func writeManifestAndLock(t *testing.T, dir, modPath, ver, commit, modDir string) {
+	t.Helper()
+	manifest := `imports: {"` + modPath + `": "` + ver + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, remote.ManifestFile), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := remote.HashTree(modDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf := struct {
+		Modules map[string]remote.LockedModule `json:"modules"`
+	}{
+		Modules: map[string]remote.LockedModule{
+			modPath: {Version: ver, Commit: commit, Hash: hash},
+		},
+	}
+	b, _ := json.MarshalIndent(lf, "", "  ")
+	if err := os.WriteFile(filepath.Join(dir, remote.LockFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLoadDirAutoEnrollsRemoteAnalyzers verifies that listing a
+// module in pasta.cue is enough to enroll its analyzers — no per-rule
+// stub in .pasta/ required. This is the "publish + use directly"
+// flow: a project ships rules, downstream consumers list it and run.
+func TestLoadDirAutoEnrollsRemoteAnalyzers(t *testing.T) {
+	remoteDir := stageRemoteModule(t, "rules", "rules.cue", `import "github.com/imjasonh/pasta/schema"
+
+xss: schema.#Analyzer & {
+	name: "xss"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc: "x"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {node: "identifier"}
+		diagnose: {message: "y", severity: "hint"}
+	}
+}
+`)
+	commit := strings.Repeat("e", 40)
+	f := &fakeFetcher{dirs: map[string]string{
+		"example.com/alice/rules@" + commit: remoteDir,
+	}}
+	prev := newDefaultFetcher
+	t.Cleanup(func() { newDefaultFetcher = prev })
+	newDefaultFetcher = func() (remote.Fetcher, error) { return f, nil }
+
+	// User dir contains ONLY pasta.cue + pasta.lock. No local rule
+	// files. The expectation is that LoadDir still returns the
+	// remote analyzer.
+	userDir := t.TempDir()
+	writeManifestAndLock(t, userDir, "example.com/alice/rules", "v1.0.0", commit, remoteDir)
+	res, err := LoadDir(userDir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(res.Analyzers) != 1 {
+		t.Fatalf("expected 1 auto-enrolled analyzer, got %d", len(res.Analyzers))
+	}
+	a := res.Analyzers[0]
+	if a.Name != "xss" {
+		t.Errorf("Name = %q, want xss", a.Name)
+	}
+	if a.Source != "example.com/alice/rules" {
+		t.Errorf("Source = %q, want example.com/alice/rules", a.Source)
+	}
+}
+
+// TestLoadDirLocalOverridesRemote verifies the collision policy:
+// when a local analyzer has the same name as a remote one, the local
+// version wins (so projects can patch a remote rule without forking
+// the module).
+func TestLoadDirLocalOverridesRemote(t *testing.T) {
+	remoteDir := stageRemoteModule(t, "rules", "rules.cue", `import "github.com/imjasonh/pasta/schema"
+
+shared: schema.#Analyzer & {
+	name: "shared"
+	version: "0.1.0"
+	doc: "remote version"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc: "x"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {node: "identifier"}
+		diagnose: {message: "y", severity: "hint"}
+	}
+}
+`)
+	commit := strings.Repeat("f", 40)
+	f := &fakeFetcher{dirs: map[string]string{
+		"example.com/alice/rules@" + commit: remoteDir,
+	}}
+	prev := newDefaultFetcher
+	t.Cleanup(func() { newDefaultFetcher = prev })
+	newDefaultFetcher = func() (remote.Fetcher, error) { return f, nil }
+
+	userDir := t.TempDir()
+	writeManifestAndLock(t, userDir, "example.com/alice/rules", "v1.0.0", commit, remoteDir)
+	if err := os.WriteFile(filepath.Join(userDir, "shared.cue"), []byte(`package myrule
+
+import "github.com/imjasonh/pasta/schema"
+
+shared: schema.#Analyzer & {
+	name: "shared"
+	version: "0.2.0"
+	doc: "local override"
+	facts: {}
+	rules: r: {
+		name: "r"
+		doc: "x"
+		languages: ["go"]
+		requires: []
+		provides: []
+		match: {node: "identifier"}
+		diagnose: {message: "y", severity: "hint"}
+	}
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := LoadDir(userDir)
+	if err != nil {
+		t.Fatalf("LoadDir: %v", err)
+	}
+	if len(res.Analyzers) != 1 {
+		t.Fatalf("expected exactly 1 analyzer (local wins), got %d", len(res.Analyzers))
+	}
+	if got := res.Analyzers[0].Doc; got != "local override" {
+		t.Errorf("Doc = %q, want local override (remote should be suppressed)", got)
+	}
+}
+
+// TestLoadDirRejectsRemoteRemoteCollision verifies that if two
+// imported modules export an analyzer with the same name, LoadDir
+// errors rather than silently picking one.
+func TestLoadDirRejectsRemoteRemoteCollision(t *testing.T) {
+	mod1 := stageRemoteModule(t, "rules", "rules.cue", `import "github.com/imjasonh/pasta/schema"
+
+dup: schema.#Analyzer & {
+	name: "dup"
+	version: "0.1.0"
+	facts: {}
+	rules: r: {name: "r", doc: "x", languages: ["go"], requires: [], provides: [], match: {node: "identifier"}, diagnose: {message: "y", severity: "hint"}}
+}
+`)
+	mod2 := stageRemoteModule(t, "rules", "rules.cue", `import "github.com/imjasonh/pasta/schema"
+
+dup: schema.#Analyzer & {
+	name: "dup"
+	version: "0.2.0"
+	facts: {}
+	rules: r: {name: "r", doc: "x", languages: ["go"], requires: [], provides: [], match: {node: "identifier"}, diagnose: {message: "y", severity: "hint"}}
+}
+`)
+	c1 := strings.Repeat("1", 40)
+	c2 := strings.Repeat("2", 40)
+	f := &fakeFetcher{dirs: map[string]string{
+		"example.com/alice/rules@" + c1: mod1,
+		"example.com/bob/rules@" + c2:   mod2,
+	}}
+	prev := newDefaultFetcher
+	t.Cleanup(func() { newDefaultFetcher = prev })
+	newDefaultFetcher = func() (remote.Fetcher, error) { return f, nil }
+
+	userDir := t.TempDir()
+	manifest := `imports: {
+	"example.com/alice/rules": "v1"
+	"example.com/bob/rules": "v1"
+}
+`
+	if err := os.WriteFile(filepath.Join(userDir, remote.ManifestFile), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h1, _ := remote.HashTree(mod1)
+	h2, _ := remote.HashTree(mod2)
+	lf := struct {
+		Modules map[string]remote.LockedModule `json:"modules"`
+	}{Modules: map[string]remote.LockedModule{
+		"example.com/alice/rules": {Version: "v1", Commit: c1, Hash: h1},
+		"example.com/bob/rules":   {Version: "v1", Commit: c2, Hash: h2},
+	}}
+	b, _ := json.MarshalIndent(lf, "", "  ")
+	if err := os.WriteFile(filepath.Join(userDir, remote.LockFile), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadDir(userDir)
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+	if !strings.Contains(err.Error(), "collision") {
+		t.Errorf("expected error to mention collision; got %v", err)
+	}
+}
+
 // TestLoadDirIgnoresPastaCueAsRule verifies that pasta.cue is not
 // treated as a rule file even when it contains valid CUE that could
 // otherwise look like an analyzer.

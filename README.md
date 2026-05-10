@@ -259,8 +259,34 @@ imports: {
 ```
 
 then run `pasta sync` to fetch the module and write
-`./.pasta/pasta.lock` pinning the resolved commit SHA. From any rule
-in the directory, import the module as a normal CUE package:
+`./.pasta/pasta.lock` pinning the resolved commit SHA.
+
+**Every top-level analyzer the module exports is auto-enrolled**, so
+listing the module is enough to start running its rules — no
+per-rule stub in `.pasta/` needed. A `.pasta/` containing only a
+manifest is valid; its rules come entirely from the imports.
+
+```
+my-project/
+  .pasta/
+    pasta.cue       # imports: { "github.com/alice/lint-rules": "v1.2.3" }
+    pasta.lock      # written by `pasta sync`
+  src/...
+```
+
+`pasta` (or `pasta -fix`) from the project root then runs alice's
+rules over `./...`.
+
+If you want to override a rule from a remote module, drop a local
+analyzer with the same name into `.pasta/` — the local version
+wins, and pasta prints a warning to stderr so the suppression is
+visible. Two remote modules exporting an analyzer with the same
+name is an error (resolve by renaming, dropping one of the
+imports, or shadowing both with a local rule).
+
+Rule files in remote modules can also be `import`ed by name from
+your local `.cue` files when you want to compose rather than just
+auto-enroll:
 
 ```cue
 import "github.com/alice/lint-rules/python_taint"
@@ -269,7 +295,9 @@ import "github.com/alice/lint-rules/python_taint"
 Modules are cached under `$XDG_CACHE_HOME/pasta/modules/` and keyed
 by commit, so re-tagging upstream after a sync can't silently change
 what your rules see — `pasta` re-uses the locked SHA until you run
-`pasta sync` again.
+`pasta sync` again. The cache is hash-verified on every load: if the
+cached files no longer match the lockfile's recorded digest, pasta
+refuses to load and tells you which dir to remove.
 
 Publishing a rule module is just `git push` plus `git tag`: any
 public repo whose `https://<path>.git` URL `git ls-remote` can

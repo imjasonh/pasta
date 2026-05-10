@@ -66,13 +66,13 @@ than `go test`.
 | `internal/loader/`            | CUE loader. Embeds the built-in `github.com/imjasonh/pasta` module under `internal/loader/cuemod/`. |
 | `internal/loader/cuemod/`     | The embedded built-in CUE module: `schema/`, `lang/<name>/`, `patterns/<name>/`. |
 | `internal/lang/`              | Runtime language registry. `grammars.go` is the only Go-side language code (maps grammar name → tree-sitter `GetLanguage`). |
-| `internal/tsutil/`            | gotreesitter `Node` wrapper that carries source bytes + language, so callers don't have to thread them. |
+| `internal/tsutil/`            | gotreesitter `Node` wrapper that carries source bytes + language + file-id, so callers don't have to thread them. |
 | `internal/match/`             | Pattern matcher: node unions, fields, adjacent windows, preceding, predicates (positional), checks (named). |
-| `internal/factstore/`         | Per-run fact store with dual indexing — by (kind, byte-range) and by (kind, identifier-text). |
+| `internal/factstore/`         | Per-run fact store with dual indexing — by (kind, file-id, byte-range) and by (kind, identifier-text). The by-name index is file-agnostic so facts propagate across files in a multi-file group. |
 | `internal/effect/`            | Compiles edits to byte-range ops, handles `@capture` interpolation, comment preservation, and `trim_start`/`trim_end`. |
 | `internal/apply/`             | Applies ops to source bytes with conflict detection. |
-| `internal/engine/`            | Top-level orchestrator. SCC scheduler with fixpoint groups for cyclic rule deps. |
-| `internal/runner/`            | Programmatic API used by both the CLI and Go tests. `LoadRules`, `RunFile`, `TestDir`. |
+| `internal/engine/`            | Top-level orchestrator. SCC scheduler with fixpoint groups for cyclic rule deps. `Run` is the single-file entry point; `RunGroup` runs a set of files with a shared fact store. |
+| `internal/runner/`            | Programmatic API used by both the CLI and Go tests. `LoadRules`, `RunFile`, `RunGroup`, `TestDir`. |
 | `analyzers/<name>/`      | A shipped analyzer: a `<name>.cue` rule + `testdata/` (sources and `.golden` files). |
 | `testdata/<name>/`       | Extension/integration demos (e.g. `notgo_alias` showing user-supplied language modules). |
 | `cmd/pasta/`             | CLI. |
@@ -88,6 +88,9 @@ analyzers/<name>/
   testdata/
     a.<ext>             # source with `// want "regex"` markers
     a.<ext>.golden      # optional: expected output after -fix
+    multi_pkg/          # optional: subdir = multi-file analysis group
+      api.<ext>
+      caller.<ext>
 ```
 
 Naming convention:
@@ -101,6 +104,13 @@ Test data:
   a rewrite is going to delete the line that holds the marker.
 - If a rule has a rewrite, ship a `.golden` showing the post-`-fix`
   source.
+- Files **directly in `testdata/`** are run as independent
+  single-file groups (each gets its own fresh fact store). Each
+  **subdirectory of `testdata/`** is run as ONE multi-file group:
+  every source file under that subdir (recursively) is analyzed with
+  a shared fact store, so a fact emitted in one file is visible at
+  query sites in the others. Use subdirs to test cross-file
+  analyzers (see `analyzers/go_unused_export/` for an example).
 
 ## Adding a language alias
 
@@ -139,11 +149,15 @@ and the runner registers them at startup.
   (diagnostics, edit ops) must be self-contained — see how
   `effect.Diagnostic` snapshots byte ranges and the line number rather
   than holding a `Node` reference.
-- **By-name fact lookup is scope-blind.** The factstore's secondary
-  index keys facts by identifier text. Two functions that both define
-  `x` will share facts on `x`. Acceptable for the single-file analyses
-  shipped today; testdata uses unique variable names per function to
-  avoid bleed.
+- **By-name fact lookup is scope-blind AND file-blind.** The
+  factstore's secondary index keys facts by identifier text only —
+  no scope, no file. Two functions that both define `x` (in the
+  same file or in different files of a multi-file group) will share
+  facts on `x`. Scope-blindness has always been the case; the
+  file-blindness is deliberate — it's what makes cross-file
+  analysis work via `has_fact` / `not_has_fact`. Testdata uses
+  unique names where bleed would corrupt the test; production
+  precision needs scope-aware fact keys (see future-work.md).
 
 ## Open work
 

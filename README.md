@@ -41,7 +41,8 @@ Rules with a ✏️ include an automatic rewrite for `-fix`.
 | [go_string_concat_empty](./analyzers/go_string_concat_empty/go_string_concat_empty.cue) ✏️ | Drop empty operand in `"" + x` / `x + ""` |
 | [go_for_range_one_literal](./analyzers/go_for_range_one_literal/go_for_range_one_literal.cue) | Flag `for _, v := range []T{x} {...}` — equivalent to a plain assignment |
 | [go_errcheck](./analyzers/go_errcheck/go_errcheck.cue) ✏️                     | Flag and rewrite `foo()` to `_ = foo()` when foo returns error (fact passing) |
-| [go_deprecated_use](./analyzers/go_deprecated_use/go_deprecated_use.cue)      | Flag calls to functions whose doc comment contains `Deprecated:` (fact passing) |
+| [go_deprecated_use](./analyzers/go_deprecated_use/go_deprecated_use.cue)      | Flag calls to functions whose doc comment contains `Deprecated:` (fact passing, works cross-file) |
+| [go_unused_export](./analyzers/go_unused_export/go_unused_export.cue)         | Flag exported funcs that no file in the analysis group calls (cross-file fact passing) |
 | [go_taint](./analyzers/go_taint/go_taint.cue)                                  | Track taint from `os.Getenv` through assignments to `exec.Command` (fact passing + fixpoint) |
 | [go_api_migration](./analyzers/go_api_migration/go_api_migration.cue) ✏️       | Worked example: ship a `.cue` adapter for breaking API changes -- added trailing arg (`widget.Render(x)` → `widget.Render(x, nil)`) and rename (`widget.OldName` → `widget.NewName`) |
 
@@ -174,12 +175,32 @@ go install github.com/imjasonh/pasta/cmd/pasta@latest
 # Run a rule against one or more sources.
 pasta path/to/rule.cue file.go [file.go ...]
 
-# Apply suggested fixes (writes to stdout).
+# Run a rule against EVERY source file under a directory, recursively.
+# `./...` is the current dir; `pkg/...` is `pkg/` and below. Files
+# whose extension doesn't map to a registered language are skipped.
+# `.git`, `vendor`, and `node_modules` are skipped by default; use
+# `-skip` with a comma-separated list to add more (e.g. `dist,build`).
+pasta path/to/rule.cue ./...
+pasta -skip dist,build path/to/rule.cue ./...
+
+# Apply suggested fixes — rewrites each source file in place.
+# Files whose fixed bytes match the input are left untouched (mtime
+# unchanged), so re-running on a clean tree is a no-op.
 pasta -fix path/to/rule.cue file.go
+pasta -fix path/to/rule.cue ./...
 
 # Run all rules in a directory against its testdata/.
 pasta test path/to/rule-dir
 ```
+
+When more than one source file is supplied (directly or via `./...`
+expansion) `pasta` analyzes them as a **single group**: a fact store is
+shared across the files, so cross-file analyzers like
+[`go_unused_export`](./analyzers/go_unused_export/go_unused_export.cue)
+or [`go_deprecated_use`](./analyzers/go_deprecated_use/go_deprecated_use.cue)
+can answer "is this name called anywhere in this codebase?" in one
+invocation. A single source path runs as a one-file group (fresh fact
+store), matching the historical behavior.
 
 A rule directory has shape:
 
@@ -187,10 +208,14 @@ A rule directory has shape:
 my-rule/
   my-rule.cue
   testdata/
-    foo.go
-    foo.go.golden    # optional: expected output after `-fix`
+    foo.go                  # top-level files: each is its own
+    foo.go.golden           # one-file group (fresh fact store)
     bar.py
     bar.py.golden
+    cross_pkg/              # subdirectory: ONE multi-file group with
+      api.go                # a shared fact store across its files
+      caller.go             # (recursive)
+      caller.go.golden
 ```
 
 `pasta test` discovers `*.cue` rules in the directory, walks `testdata/`
@@ -202,6 +227,11 @@ for source files in any registered language, runs the rules, and verifies:
    marker line).
 2. Every `// want` marker is satisfied by exactly one diagnostic.
 3. If a `<file>.golden` exists, the `-fix` output matches it byte-for-byte.
+
+Files directly under `testdata/` are run as independent single-file
+groups. Each subdirectory of `testdata/` is run as one multi-file
+group sharing a fact store — use subdirs to test cross-file analyzers
+with realistic multi-file inputs.
 
 ## Use case: shipping adapters for breaking changes
 

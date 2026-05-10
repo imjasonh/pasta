@@ -12,7 +12,7 @@ import (
 
 func parseGo(t *testing.T, src string) tsutil.Node {
 	t.Helper()
-	_, root, err := tsutil.Parse(t.Context(), grammars.GoLanguage(), []byte(src))
+	_, root, err := tsutil.Parse(t.Context(), grammars.GoLanguage(), []byte(src), "")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

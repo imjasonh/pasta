@@ -25,7 +25,7 @@ func f(x *int) bool {
 	return true
 }
 `)
-	tree, root, err := tsutil.Parse(t.Context(), grammars.GoLanguage(), src)
+	tree, root, err := tsutil.Parse(t.Context(), grammars.GoLanguage(), src, "")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

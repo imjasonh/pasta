@@ -221,21 +221,32 @@ CUE — no runtime change.
 ## Fact system
 
 ### Cross-file / cross-package facts
-**Effort:** L.
-The runner today processes one file at a time with a fresh fact
-store per file. Real production analysis (errcheck across packages,
-deprecated-use tracking across files, dead-code detection) needs
-facts to flow between files.
+**Status: implemented (basic form).**
+`engine.RunGroup` parses every file in a group with a single shared
+fact store. Topological scheduling runs each rule across every file
+applicable to its language for a given topo level; fixpoint groups
+loop emit-only across all files until the store converges, then do
+one collection pass. The factstore's by-range index includes the
+file-id (so two files with overlapping byte ranges don't collide);
+the by-name index is intentionally file-agnostic so an
+`identifier`-anchored fact emitted in one file is visible at query
+sites in another. `runner.TestDir` treats each subdirectory of
+`testdata/` as a multi-file analysis group; top-level files remain
+independent. See `analyzers/go_unused_export/` for a worked example
+and `analyzers/go_deprecated_use/testdata/cross_file/` for a
+cross-file regression of an existing single-file analyzer.
 
-Sketch:
-1. Walk all input files; group by package / module per a CUE-declared
-   convention.
-2. For each topo level of the rule graph: run all "fact-emitting"
-   rules over every file in scope, accumulating into a shared store.
-3. After the emit phase converges, run "fact-consuming" rules over
-   every file, gathering diagnostics.
-
-This is a substantial refactor of `engine.Run` and `runner.TestDir`.
+What's still missing:
+- **Package-aware grouping.** Today every file in a `testdata/`
+  subdir (or every file passed to the CLI) is one group. There's
+  no notion of "go.mod / package imports define the group" — a
+  CUE-declared convention or per-language packager would close
+  that.
+- **Cross-language coordination beyond by-name.** Cross-language
+  facts work by string matching on the identifier text; for
+  precision (e.g. `errors` is a Go package, also a Python module
+  name) you'd want a typed fact namespace. See "Cross-analyzer
+  fact namespacing" below.
 
 ### Scope-aware fact keys
 **Effort:** M. **Surfaced by:** taint analyzers' caveat.

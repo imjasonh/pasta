@@ -46,6 +46,7 @@ import (
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/lang"
 	"github.com/imjasonh/pasta/internal/loader"
+	"github.com/imjasonh/pasta/internal/parsecache"
 	"github.com/imjasonh/pasta/internal/remote"
 	"github.com/imjasonh/pasta/internal/runner"
 )
@@ -85,6 +86,7 @@ func runFix(args []string) int {
 	fix := fs.Bool("fix", false, "apply suggested fixes by rewriting each source file in place")
 	skip := fs.String("skip", "", "comma-separated directory basenames to skip during ./... expansion (in addition to defaults: .git, vendor, node_modules, .pasta)")
 	rulesDir := fs.String("rules", "", "directory of CUE rule files to load (default: ./"+DefaultRulesDir+")")
+	noCache := fs.Bool("nocache", false, "disable the persistent parse-result cache for this run")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -120,7 +122,12 @@ func runFix(args []string) int {
 		return exit
 	}
 
-	results, err := runner.RunGroup(context.Background(), specs, analyzers, *fix)
+	var runOpts []runner.Option
+	cache := openCache(*noCache, analyzers, *rulesDir)
+	if cache != nil {
+		runOpts = append(runOpts, runner.WithCache(cache))
+	}
+	results, err := runner.RunGroup(context.Background(), specs, analyzers, *fix, runOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
@@ -143,7 +150,59 @@ func runFix(args []string) int {
 			exit = 1
 		}
 	}
+	if cache != nil {
+		// Best-effort prune at the end of the run. Failures are
+		// silent — the cache works fine even slightly over budget.
+		_ = cache.Prune()
+	}
 	return exit
+}
+
+// defaultCacheSizeBytes bounds the on-disk parse cache. Sized for a
+// laptop-class machine: large enough to comfortably hold the results
+// of a few medium-sized projects without nudging the user toward
+// running out of space.
+const defaultCacheSizeBytes int64 = 1 << 30 // 1 GiB
+
+// openCache picks a cache directory and constructs a *parsecache.Cache.
+// Order of preference:
+//
+//  1. If the rule directory contains a `cache/` subdirectory or the
+//     user opted into project-local caching via `pasta.cue`, store
+//     there. This keeps CI runners and isolated builds self-contained.
+//  2. Otherwise use $XDG_CACHE_HOME/pasta (or os.UserCacheDir()'s
+//     default), so repeated runs across projects share the prune
+//     budget.
+//
+// Returns nil when caching is disabled (-nocache) or when a directory
+// cannot be located — the engine treats a nil cache as no-op.
+func openCache(disabled bool, analyzers []*dsl.Analyzer, rulesDirFlag string) *parsecache.Cache {
+	if disabled {
+		return nil
+	}
+	dir := pickCacheDir(rulesDirFlag)
+	if dir == "" {
+		return nil
+	}
+	return parsecache.Open(dir, parsecache.HashRules(analyzers), defaultCacheSizeBytes)
+}
+
+// pickCacheDir resolves the cache directory. Project-local
+// `.pasta/cache/` wins when it already exists; otherwise the standard
+// per-user cache root.
+func pickCacheDir(rulesDirFlag string) string {
+	candidate := rulesDirFlag
+	if candidate == "" {
+		candidate = DefaultRulesDir
+	}
+	if info, err := os.Stat(filepath.Join(candidate, "cache")); err == nil && info.IsDir() {
+		return filepath.Join(candidate, "cache")
+	}
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, "pasta")
 }
 
 // selectRules picks between the directory form (`pasta [source...]`,

@@ -18,6 +18,7 @@ import (
 	"github.com/imjasonh/pasta/internal/factstore"
 	"github.com/imjasonh/pasta/internal/lang"
 	"github.com/imjasonh/pasta/internal/match"
+	"github.com/imjasonh/pasta/internal/parsecache"
 	"github.com/imjasonh/pasta/internal/tsutil"
 )
 
@@ -83,6 +84,24 @@ type fileState struct {
 // releaser is the subset of *gts.Tree we actually need (Release).
 type releaser interface{ Release() }
 
+// Option configures a single RunGroup call. Options are applied in
+// order; later options win on conflict.
+type Option func(*runOpts)
+
+type runOpts struct {
+	cache *parsecache.Cache
+}
+
+// WithCache enables the persistent parse-result cache for this run.
+// The cache is consulted only in the streaming path; runs that take
+// the in-memory path (cross-file `requires`, fixpoint groups) skip
+// it for correctness, since a file's diagnostics there may depend on
+// facts emitted from other files. A nil cache is treated as no
+// caching.
+func WithCache(c *parsecache.Cache) Option {
+	return func(o *runOpts) { o.cache = c }
+}
+
 // RunGroup parses every file in files, sharing a single fact store
 // across them, and returns one Result per file (positionally aligned
 // with files).
@@ -96,6 +115,8 @@ type releaser interface{ Release() }
 //     — parse, run all groups, release the tree. Files are dispatched
 //     across a worker pool so parsing and matching run in parallel.
 //     Peak memory is O(workers × tree-size) instead of O(N × tree-size).
+//     When WithCache is supplied, unchanged files skip parse + match
+//     entirely on a cache hit.
 //
 //   - Legacy in-memory: when a rule's `requires` references facts
 //     emitted by other rules, OR when any group is a fixpoint, every
@@ -108,6 +129,7 @@ func RunGroup(
 	ctx context.Context,
 	files []FileInput,
 	analyzers []*dsl.Analyzer,
+	opts ...Option,
 ) ([]Result, error) {
 	if len(files) == 0 {
 		return nil, nil
@@ -118,8 +140,13 @@ func RunGroup(
 		return nil, err
 	}
 
+	var o runOpts
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	if canStream(groups) {
-		return runStreaming(ctx, files, groups)
+		return runStreaming(ctx, files, groups, o.cache)
 	}
 	return runInMemory(ctx, files, groups)
 }
@@ -151,10 +178,15 @@ func canStream(groups []ruleGroup) bool {
 // of size GOMAXPROCS. Trees are released as soon as their file's rules
 // finish, keeping peak memory bounded by the worker count rather than
 // the file count.
+//
+// When cache is non-nil, each file is looked up by (lang, source-hash)
+// before parsing — a hit returns the cached diagnostics + ops
+// directly. Cache writes happen after a fresh parse + match completes.
 func runStreaming(
 	ctx context.Context,
 	files []FileInput,
 	groups []ruleGroup,
+	cache *parsecache.Cache,
 ) ([]Result, error) {
 	store := factstore.New()
 	results := make([]Result, len(files))
@@ -183,7 +215,7 @@ func runStreaming(
 				if ctx.Err() != nil {
 					return
 				}
-				if err := processFile(ctx, files[j.idx], groups, store, &results[j.idx]); err != nil {
+				if err := processFile(ctx, files[j.idx], groups, store, &results[j.idx], cache); err != nil {
 					select {
 					case errCh <- err:
 						cancel()
@@ -216,13 +248,28 @@ dispatch:
 
 // processFile parses one file, runs every applicable rule group against
 // it, then releases the tree. Used by the streaming path.
+//
+// When cache is non-nil, it's consulted before parsing. A hit copies
+// the cached Diagnostics + Ops straight into out and returns. A miss
+// runs the full pipeline and then writes the result back to the
+// cache, so the next run over unchanged bytes is a cheap read.
 func processFile(
 	ctx context.Context,
 	f FileInput,
 	groups []ruleGroup,
 	store *factstore.Store,
 	out *Result,
+	cache *parsecache.Cache,
 ) error {
+	var key string
+	if cache != nil {
+		key = parsecache.HashFile(f.Lang.Name, f.Src)
+		if e, ok := cache.Get(key); ok {
+			out.Diagnostics = append(out.Diagnostics, e.Diagnostics...)
+			out.Ops = append(out.Ops, e.Ops...)
+			return nil
+		}
+	}
 	s, err := newFileState(ctx, f, store)
 	if err != nil {
 		return err
@@ -232,6 +279,15 @@ func processFile(
 		if err := runGroupOnFile(group, s, store, out); err != nil {
 			return err
 		}
+	}
+	if cache != nil {
+		// Copy slices so a future append on `out` doesn't mutate
+		// what we hand the cache. The cache encodes immediately, so
+		// snapshotting here is fine even though out is shared.
+		cache.Put(key, parsecache.Entry{
+			Diagnostics: append([]effect.Diagnostic(nil), out.Diagnostics...),
+			Ops:         append([]effect.Op(nil), out.Ops...),
+		})
 	}
 	return nil
 }

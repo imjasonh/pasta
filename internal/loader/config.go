@@ -22,6 +22,7 @@ import (
 //	disabled_rules: ["go_iferr", "todo_format"]          // skip these rules
 //	severity:       {go_panic_empty: "error"}            // override per-rule severity
 //	skip:           ["build", "dist"]                    // extra ./... walk skip-dirs
+//	max_file_size:  2_000_000                            // bytes; 0 = unlimited
 //
 // `imports` is consumed by internal/remote (LoadManifest); this loader
 // only reads the config-relevant fields. Co-locating them in one file
@@ -30,6 +31,14 @@ type Config struct {
 	DisabledRules []string          `json:"disabled_rules,omitempty"`
 	Severity      map[string]string `json:"severity,omitempty"`
 	Skip          []string          `json:"skip,omitempty"`
+
+	// MaxFileSize is the size cap, in bytes, applied during `./...`
+	// expansion: files larger than this are dropped from the source
+	// list. Nil means "not specified" — the CLI applies its own
+	// default (1 MiB). A pointer to 0 means "no cap; analyze
+	// everything"; users opting into unlimited mode set this
+	// explicitly to override the default.
+	MaxFileSize *int64 `json:"max_file_size,omitempty"`
 }
 
 // LoadConfig reads `<dir>/pasta.cue` and extracts the config-relevant
@@ -58,6 +67,16 @@ func LoadConfig(dir string) (*Config, bool, error) {
 	}
 	if err := decodeStringList(v, "skip", &cfg.Skip); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	if mfs := v.LookupPath(cue.ParsePath("max_file_size")); mfs.Exists() {
+		n, err := mfs.Int64()
+		if err != nil {
+			return nil, false, fmt.Errorf("%s: max_file_size must be an integer: %w", path, err)
+		}
+		if n < 0 {
+			return nil, false, fmt.Errorf("%s: max_file_size must be >= 0 (got %d)", path, n)
+		}
+		cfg.MaxFileSize = &n
 	}
 	sev := v.LookupPath(cue.ParsePath("severity"))
 	if sev.Exists() {

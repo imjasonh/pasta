@@ -101,10 +101,13 @@ func runFix(args []string) int {
 		rawSources = []string{"./..."}
 	}
 
-	expanded, err := expandSources(rawSources, parseSkipDirs(*skip, cfg))
+	expanded, skippedBySize, err := expandSources(rawSources, parseSkipDirs(*skip, cfg), resolveMaxFileSize(cfg))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
+	}
+	for _, p := range skippedBySize {
+		fmt.Fprintf(os.Stderr, "%s: skipped (over max_file_size)\n", p)
 	}
 
 	specs := make([]runner.FileSpec, 0, len(expanded))
@@ -266,18 +269,24 @@ func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, *lo
 // to a registered language; .golden files are excluded. Plain paths
 // pass through unchanged. Directory basenames in skip are pruned
 // during the walk.
-func expandSources(args []string, skip map[string]bool) ([]string, error) {
+//
+// The `./...` form also applies maxFileSize: files larger than that
+// many bytes are dropped from the result. Explicit positional paths
+// pass through regardless — a user pointing pasta at a single huge
+// file presumably wants it analyzed. maxFileSize <= 0 disables the
+// cap entirely.
+func expandSources(args []string, skip map[string]bool, maxFileSize int64) ([]string, []string, error) {
 	seen := map[string]bool{}
-	var out []string
+	var out, skipped []string
 	for _, a := range args {
 		if a == "..." || a == "./..." || strings.HasSuffix(a, "/...") {
 			root := strings.TrimSuffix(a, "/...")
 			if root == "" || a == "..." {
 				root = "."
 			}
-			matches, err := walkSources(root, skip)
+			matches, oversized, err := walkSources(root, skip, maxFileSize)
 			if err != nil {
-				return nil, fmt.Errorf("expand %s: %w", a, err)
+				return nil, nil, fmt.Errorf("expand %s: %w", a, err)
 			}
 			for _, p := range matches {
 				if !seen[p] {
@@ -285,6 +294,7 @@ func expandSources(args []string, skip map[string]bool) ([]string, error) {
 					out = append(out, p)
 				}
 			}
+			skipped = append(skipped, oversized...)
 			continue
 		}
 		if !seen[a] {
@@ -293,7 +303,7 @@ func expandSources(args []string, skip map[string]bool) ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, skipped, nil
 }
 
 // defaultSkipDirs are directory basenames pasta won't descend into
@@ -306,6 +316,29 @@ var defaultSkipDirs = map[string]bool{
 	"vendor":       true,
 	"node_modules": true,
 	".pasta":       true,
+}
+
+// defaultMaxFileSize caps the size of files included in a `./...`
+// walk. Pure-Go tree-sitter's runtime is super-linear on huge inputs
+// (a multi-megabyte generated swagger.json can pin one worker for
+// minutes), and analyzers virtually never care about generated
+// blobs of that size. Users opt into larger limits — or no limit —
+// via `max_file_size` in `pasta.cue`.
+const defaultMaxFileSize int64 = 1 << 20 // 1 MiB
+
+// resolveMaxFileSize picks the file-size cap for this run.
+//
+//   - cfg nil or MaxFileSize unset: defaultMaxFileSize.
+//   - MaxFileSize == 0:  explicit opt-out (no cap).
+//   - MaxFileSize >  0:  use as-is.
+//
+// A negative value would have been rejected by LoadConfig, so this
+// helper never sees one.
+func resolveMaxFileSize(cfg *loader.Config) int64 {
+	if cfg == nil || cfg.MaxFileSize == nil {
+		return defaultMaxFileSize
+	}
+	return *cfg.MaxFileSize
 }
 
 // parseSkipDirs returns the union of defaultSkipDirs, any `skip` list
@@ -334,8 +367,15 @@ func parseSkipDirs(extra string, cfg *loader.Config) map[string]bool {
 // walkSources walks root and returns every file with an extension
 // pasta knows about (via lang.ByExt). .golden files are skipped, as
 // are directories whose basename is in skip.
-func walkSources(root string, skip map[string]bool) ([]string, error) {
-	var out []string
+//
+// Files larger than maxFileSize bytes are reported as `skipped`
+// rather than analyzed. Pure-Go tree-sitter is super-linear on huge
+// inputs (a 5 MB generated swagger.json can monopolise a worker for
+// minutes), and rules virtually never care about generated blobs of
+// that size — so the cap is a pragmatic defense rather than a
+// principled language-level filter. Pass maxFileSize <= 0 to disable.
+func walkSources(root string, skip map[string]bool, maxFileSize int64) ([]string, []string, error) {
+	var out, oversized []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -356,10 +396,17 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 		if _, ok := lang.ByExt(filepath.Ext(name)); !ok {
 			return nil
 		}
+		if maxFileSize > 0 {
+			info, ierr := d.Info()
+			if ierr == nil && info.Size() > maxFileSize {
+				oversized = append(oversized, p)
+				return nil
+			}
+		}
 		out = append(out, p)
 		return nil
 	})
-	return out, err
+	return out, oversized, err
 }
 
 // runSync resolves the manifest in each rule directory: fetches every

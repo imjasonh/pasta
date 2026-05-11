@@ -13,6 +13,8 @@
 package factstore
 
 import (
+	"sync"
+
 	"github.com/imjasonh/pasta/internal/tsutil"
 )
 
@@ -44,8 +46,11 @@ type Fact struct {
 	Payload            map[string]any
 }
 
-// Store is the per-run fact store.
+// Store is the per-run fact store. Safe for concurrent use: the engine
+// emits and queries facts from multiple worker goroutines when files
+// are processed in parallel.
 type Store struct {
+	mu      sync.RWMutex
 	byRange map[Key]Fact
 	byName  map[NameKey]Fact
 }
@@ -73,7 +78,6 @@ var identifierTypes = map[string]bool{
 // in fixpoint groups.
 func (s *Store) Emit(kind string, node tsutil.Node, payload map[string]any) bool {
 	k := Key{FileID: node.FileID, StartByte: node.StartByte(), EndByte: node.EndByte(), Kind: kind}
-	_, exists := s.byRange[k]
 	fact := Fact{
 		Kind:      kind,
 		FileID:    node.FileID,
@@ -81,10 +85,18 @@ func (s *Store) Emit(kind string, node tsutil.Node, payload map[string]any) bool
 		EndByte:   node.EndByte(),
 		Payload:   payload,
 	}
-	s.byRange[k] = fact
-	if identifierTypes[node.Type()] {
-		s.byName[NameKey{Name: node.Text(), Kind: kind}] = fact
+	isIdent := identifierTypes[node.Type()]
+	var nameKey NameKey
+	if isIdent {
+		nameKey = NameKey{Name: node.Text(), Kind: kind}
 	}
+	s.mu.Lock()
+	_, exists := s.byRange[k]
+	s.byRange[k] = fact
+	if isIdent {
+		s.byName[nameKey] = fact
+	}
+	s.mu.Unlock()
 	return !exists
 }
 
@@ -94,11 +106,19 @@ func (s *Store) Has(node tsutil.Node, kind string) bool {
 	if s == nil {
 		return false
 	}
-	if _, ok := s.byRange[Key{FileID: node.FileID, StartByte: node.StartByte(), EndByte: node.EndByte(), Kind: kind}]; ok {
+	rk := Key{FileID: node.FileID, StartByte: node.StartByte(), EndByte: node.EndByte(), Kind: kind}
+	isIdent := identifierTypes[node.Type()]
+	var nk NameKey
+	if isIdent {
+		nk = NameKey{Name: node.Text(), Kind: kind}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.byRange[rk]; ok {
 		return true
 	}
-	if identifierTypes[node.Type()] {
-		if _, ok := s.byName[NameKey{Name: node.Text(), Kind: kind}]; ok {
+	if isIdent {
+		if _, ok := s.byName[nk]; ok {
 			return true
 		}
 	}
@@ -110,11 +130,19 @@ func (s *Store) Get(node tsutil.Node, kind string) (Fact, bool) {
 	if s == nil {
 		return Fact{}, false
 	}
-	if f, ok := s.byRange[Key{FileID: node.FileID, StartByte: node.StartByte(), EndByte: node.EndByte(), Kind: kind}]; ok {
+	rk := Key{FileID: node.FileID, StartByte: node.StartByte(), EndByte: node.EndByte(), Kind: kind}
+	isIdent := identifierTypes[node.Type()]
+	var nk NameKey
+	if isIdent {
+		nk = NameKey{Name: node.Text(), Kind: kind}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if f, ok := s.byRange[rk]; ok {
 		return f, true
 	}
-	if identifierTypes[node.Type()] {
-		if f, ok := s.byName[NameKey{Name: node.Text(), Kind: kind}]; ok {
+	if isIdent {
+		if f, ok := s.byName[nk]; ok {
 			return f, true
 		}
 	}
@@ -126,5 +154,7 @@ func (s *Store) Len() int {
 	if s == nil {
 		return 0
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return len(s.byRange)
 }

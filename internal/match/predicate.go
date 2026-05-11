@@ -3,10 +3,32 @@ package match
 import (
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/tsutil"
 )
+
+// reCache memoizes regexp.Compile. Patterns come from rule definitions
+// (a small, fixed set per rule directory) but predMatches/predNotMatches
+// are evaluated once per candidate node — recompiling per call dominates
+// where-predicate cost when a rule uses a `matches` clause.
+var reCache sync.Map // key: pattern string; value: compiledRE
+
+type compiledRE struct {
+	re  *regexp.Regexp
+	err error
+}
+
+func cachedRegexp(pat string) (*regexp.Regexp, error) {
+	if v, ok := reCache.Load(pat); ok {
+		c := v.(compiledRE)
+		return c.re, c.err
+	}
+	re, err := regexp.Compile(pat)
+	reCache.Store(pat, compiledRE{re: re, err: err})
+	return re, err
+}
 
 // PredicateFunc evaluates a `where` predicate. Args are positional;
 // each is a dsl.Arg (sum of string and []string).
@@ -173,7 +195,7 @@ func predMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if !ok {
 		return false
 	}
-	re, err := regexp.Compile(posStr(args, 1))
+	re, err := cachedRegexp(posStr(args, 1))
 	if err != nil {
 		return false
 	}
@@ -188,7 +210,7 @@ func predNotMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if !ok {
 		return false
 	}
-	re, err := regexp.Compile(posStr(args, 1))
+	re, err := cachedRegexp(posStr(args, 1))
 	if err != nil {
 		return false
 	}
@@ -436,7 +458,7 @@ func predPrevSiblingMatches(args []dsl.Arg, env *Env, caps Captures) bool {
 	if !prev.IsValid() {
 		return false
 	}
-	re, err := regexp.Compile(posStr(args, 1))
+	re, err := cachedRegexp(posStr(args, 1))
 	if err != nil {
 		return false
 	}

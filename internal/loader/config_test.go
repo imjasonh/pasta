@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -92,6 +93,65 @@ skip: ["build"]
 		t.Errorf("skip: %v", cfg.Skip)
 	}
 }
+
+func TestLoadConfig_maxFileSize(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want *int64
+	}{
+		{
+			name: "absent",
+			src:  `disabled_rules: ["x"]`,
+			want: nil,
+		},
+		{
+			name: "positive",
+			src:  `max_file_size: 2_000_000`,
+			want: int64Ptr(2_000_000),
+		},
+		{
+			name: "explicit zero",
+			src:  `max_file_size: 0`,
+			want: int64Ptr(0),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, remote.ManifestFile), []byte(tc.src), 0o644); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			cfg, _, err := LoadConfig(dir)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if !reflect.DeepEqual(cfg.MaxFileSize, tc.want) {
+				gv := "nil"
+				if cfg.MaxFileSize != nil {
+					gv = fmt.Sprintf("%d", *cfg.MaxFileSize)
+				}
+				wv := "nil"
+				if tc.want != nil {
+					wv = fmt.Sprintf("%d", *tc.want)
+				}
+				t.Errorf("MaxFileSize: got %s, want %s", gv, wv)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_maxFileSizeNegative(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, remote.ManifestFile), []byte(`max_file_size: -1`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, _, err := LoadConfig(dir); err == nil {
+		t.Fatal("expected error for negative max_file_size")
+	}
+}
+
+func int64Ptr(n int64) *int64 { return &n }
 
 func TestLoadConfig_invalidSeverity(t *testing.T) {
 	dir := t.TempDir()

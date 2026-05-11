@@ -189,6 +189,7 @@ imports: {"github.com/alice/lint-rules": "v1.2.3"}  // remote rule modules
 disabled_rules: ["go_iferr", "todo_format"]         // skip these rules entirely
 severity: {go_panic_empty: "error"}                  // override per-rule severity
 skip: ["build", "dist"]                              // extra ./... walk skip-dirs
+max_file_size: 2_000_000                              // bytes; 0 disables; default 1 MiB
 ```
 
 `disabled_rules` and `severity` are applied to the analyzers at load
@@ -196,6 +197,17 @@ time by `applyConfig` (rule-name → drop / severity rewrite).
 `skip` is consumed by the CLI, unioned with `-skip` and the built-in
 defaults. Severity values are validated — anything outside
 `error|warning|info|hint` is a load error.
+
+`max_file_size` caps the size of files included in a `./...` walk.
+Pure-Go tree-sitter is super-linear on huge inputs (a 5 MB generated
+swagger.json can pin one worker for minutes), and real rules
+virtually never care about generated blobs of that size. The default
+cap is 1 MiB — enough to comfortably cover hand-written source while
+keeping the long tail of generated/vendored blobs out of the run.
+Set explicitly to `0` to opt out and analyze every file. Skipped
+files are listed on stderr so users notice the filter is active.
+Explicit positional source paths bypass the cap; the filter only
+applies to `./...` expansion.
 
 `runner.LoadProject(dir)` returns `Project{Analyzers, Config}` for
 callers (the CLI) that need access to the raw config. `LoadRules` is

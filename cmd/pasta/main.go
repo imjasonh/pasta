@@ -39,17 +39,30 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/lang"
 	"github.com/imjasonh/pasta/internal/loader"
+	"github.com/imjasonh/pasta/internal/parsecache"
 	"github.com/imjasonh/pasta/internal/remote"
 	"github.com/imjasonh/pasta/internal/runner"
 )
 
 func main() {
+	// Pasta runs as a one-shot CLI over many big tree-sitter parse trees.
+	// The default GC pacing (GOGC=100) triggers a collection every time
+	// the heap doubles, which on a `./...` walk fires once per file or
+	// two and dominates wall time. Loosening the ratio lets us batch many
+	// files between collections — peak RSS grows, but a developer-machine
+	// CLI can spend the headroom. Honour an explicit GOGC env var; only
+	// override the implicit default.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(1000)
+	}
+
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "test":
@@ -73,6 +86,7 @@ func runFix(args []string) int {
 	fix := fs.Bool("fix", false, "apply suggested fixes by rewriting each source file in place")
 	skip := fs.String("skip", "", "comma-separated directory basenames to skip during ./... expansion (in addition to defaults: .git, vendor, node_modules, .pasta)")
 	rulesDir := fs.String("rules", "", "directory of CUE rule files to load (default: ./"+DefaultRulesDir+")")
+	noCache := fs.Bool("nocache", false, "disable the persistent parse-result cache for this run")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -87,10 +101,13 @@ func runFix(args []string) int {
 		rawSources = []string{"./..."}
 	}
 
-	expanded, err := expandSources(rawSources, parseSkipDirs(*skip, cfg))
+	expanded, skippedBySize, err := expandSources(rawSources, parseSkipDirs(*skip, cfg), resolveMaxFileSize(cfg))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
+	}
+	for _, p := range skippedBySize {
+		fmt.Fprintf(os.Stderr, "%s: skipped (over max_file_size)\n", p)
 	}
 
 	specs := make([]runner.FileSpec, 0, len(expanded))
@@ -108,7 +125,12 @@ func runFix(args []string) int {
 		return exit
 	}
 
-	results, err := runner.RunGroup(context.Background(), specs, analyzers, *fix)
+	var runOpts []runner.Option
+	cache := openCache(*noCache, analyzers, *rulesDir)
+	if cache != nil {
+		runOpts = append(runOpts, runner.WithCache(cache))
+	}
+	results, err := runner.RunGroup(context.Background(), specs, analyzers, *fix, runOpts...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
@@ -131,7 +153,63 @@ func runFix(args []string) int {
 			exit = 1
 		}
 	}
+	if cache != nil {
+		if os.Getenv("PASTA_CACHE_STATS") != "" {
+			s := cache.Stats()
+			fmt.Fprintf(os.Stderr, "cache: %d hits, %d misses, %d writes\n", s.Hits, s.Misses, s.Writes)
+		}
+		// Best-effort prune at the end of the run. Failures are
+		// silent — the cache works fine even slightly over budget.
+		_ = cache.Prune()
+	}
 	return exit
+}
+
+// defaultCacheSizeBytes bounds the on-disk parse cache. Sized for a
+// laptop-class machine: large enough to comfortably hold the results
+// of a few medium-sized projects without nudging the user toward
+// running out of space.
+const defaultCacheSizeBytes int64 = 1 << 30 // 1 GiB
+
+// openCache picks a cache directory and constructs a *parsecache.Cache.
+// Order of preference:
+//
+//  1. If the rule directory contains a `cache/` subdirectory or the
+//     user opted into project-local caching via `pasta.cue`, store
+//     there. This keeps CI runners and isolated builds self-contained.
+//  2. Otherwise use $XDG_CACHE_HOME/pasta (or os.UserCacheDir()'s
+//     default), so repeated runs across projects share the prune
+//     budget.
+//
+// Returns nil when caching is disabled (-nocache) or when a directory
+// cannot be located — the engine treats a nil cache as no-op.
+func openCache(disabled bool, analyzers []*dsl.Analyzer, rulesDirFlag string) *parsecache.Cache {
+	if disabled {
+		return nil
+	}
+	dir := pickCacheDir(rulesDirFlag)
+	if dir == "" {
+		return nil
+	}
+	return parsecache.Open(dir, parsecache.HashRules(analyzers), defaultCacheSizeBytes)
+}
+
+// pickCacheDir resolves the cache directory. Project-local
+// `.pasta/cache/` wins when it already exists; otherwise the standard
+// per-user cache root.
+func pickCacheDir(rulesDirFlag string) string {
+	candidate := rulesDirFlag
+	if candidate == "" {
+		candidate = DefaultRulesDir
+	}
+	if info, err := os.Stat(filepath.Join(candidate, "cache")); err == nil && info.IsDir() {
+		return filepath.Join(candidate, "cache")
+	}
+	root, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(root, "pasta")
 }
 
 // selectRules picks between the directory form (`pasta [source...]`,
@@ -191,18 +269,24 @@ func selectRules(rulesDirFlag string, positional []string) ([]*dsl.Analyzer, *lo
 // to a registered language; .golden files are excluded. Plain paths
 // pass through unchanged. Directory basenames in skip are pruned
 // during the walk.
-func expandSources(args []string, skip map[string]bool) ([]string, error) {
+//
+// The `./...` form also applies maxFileSize: files larger than that
+// many bytes are dropped from the result. Explicit positional paths
+// pass through regardless — a user pointing pasta at a single huge
+// file presumably wants it analyzed. maxFileSize <= 0 disables the
+// cap entirely.
+func expandSources(args []string, skip map[string]bool, maxFileSize int64) ([]string, []string, error) {
 	seen := map[string]bool{}
-	var out []string
+	var out, skipped []string
 	for _, a := range args {
 		if a == "..." || a == "./..." || strings.HasSuffix(a, "/...") {
 			root := strings.TrimSuffix(a, "/...")
 			if root == "" || a == "..." {
 				root = "."
 			}
-			matches, err := walkSources(root, skip)
+			matches, oversized, err := walkSources(root, skip, maxFileSize)
 			if err != nil {
-				return nil, fmt.Errorf("expand %s: %w", a, err)
+				return nil, nil, fmt.Errorf("expand %s: %w", a, err)
 			}
 			for _, p := range matches {
 				if !seen[p] {
@@ -210,6 +294,7 @@ func expandSources(args []string, skip map[string]bool) ([]string, error) {
 					out = append(out, p)
 				}
 			}
+			skipped = append(skipped, oversized...)
 			continue
 		}
 		if !seen[a] {
@@ -218,7 +303,7 @@ func expandSources(args []string, skip map[string]bool) ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, skipped, nil
 }
 
 // defaultSkipDirs are directory basenames pasta won't descend into
@@ -231,6 +316,29 @@ var defaultSkipDirs = map[string]bool{
 	"vendor":       true,
 	"node_modules": true,
 	".pasta":       true,
+}
+
+// defaultMaxFileSize caps the size of files included in a `./...`
+// walk. Pure-Go tree-sitter's runtime is super-linear on huge inputs
+// (a multi-megabyte generated swagger.json can pin one worker for
+// minutes), and analyzers virtually never care about generated
+// blobs of that size. Users opt into larger limits — or no limit —
+// via `max_file_size` in `pasta.cue`.
+const defaultMaxFileSize int64 = 1 << 20 // 1 MiB
+
+// resolveMaxFileSize picks the file-size cap for this run.
+//
+//   - cfg nil or MaxFileSize unset: defaultMaxFileSize.
+//   - MaxFileSize == 0:  explicit opt-out (no cap).
+//   - MaxFileSize >  0:  use as-is.
+//
+// A negative value would have been rejected by LoadConfig, so this
+// helper never sees one.
+func resolveMaxFileSize(cfg *loader.Config) int64 {
+	if cfg == nil || cfg.MaxFileSize == nil {
+		return defaultMaxFileSize
+	}
+	return *cfg.MaxFileSize
 }
 
 // parseSkipDirs returns the union of defaultSkipDirs, any `skip` list
@@ -259,8 +367,15 @@ func parseSkipDirs(extra string, cfg *loader.Config) map[string]bool {
 // walkSources walks root and returns every file with an extension
 // pasta knows about (via lang.ByExt). .golden files are skipped, as
 // are directories whose basename is in skip.
-func walkSources(root string, skip map[string]bool) ([]string, error) {
-	var out []string
+//
+// Files larger than maxFileSize bytes are reported as `skipped`
+// rather than analyzed. Pure-Go tree-sitter is super-linear on huge
+// inputs (a 5 MB generated swagger.json can monopolise a worker for
+// minutes), and rules virtually never care about generated blobs of
+// that size — so the cap is a pragmatic defense rather than a
+// principled language-level filter. Pass maxFileSize <= 0 to disable.
+func walkSources(root string, skip map[string]bool, maxFileSize int64) ([]string, []string, error) {
+	var out, oversized []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -281,10 +396,17 @@ func walkSources(root string, skip map[string]bool) ([]string, error) {
 		if _, ok := lang.ByExt(filepath.Ext(name)); !ok {
 			return nil
 		}
+		if maxFileSize > 0 {
+			info, ierr := d.Info()
+			if ierr == nil && info.Size() > maxFileSize {
+				oversized = append(oversized, p)
+				return nil
+			}
+		}
 		out = append(out, p)
 		return nil
 	})
-	return out, err
+	return out, oversized, err
 }
 
 // runSync resolves the manifest in each rule directory: fetches every

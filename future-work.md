@@ -306,6 +306,71 @@ Pick when a real use case forces the choice.
 
 ## Performance
 
+The streaming engine, persistent parse cache, and `max_file_size`
+cap shipped together (PR #7) — the remaining ceiling on
+cold-cache runs is the parser itself.
+
+### Switch to cgo tree-sitter
+**Effort:** L.
+The pure-Go `gotreesitter` port parses at ~300 KB/s on the kubectl
+staging module; upstream C tree-sitter does ~30 MB/s. That's the
+single biggest remaining wall-clock win available — roughly 10×
+on cold runs. Cost: pasta gains a C-toolchain build dependency,
+which breaks the "go install" story we have today. Worth doing
+once warm-cache hit rates are routinely high enough that cold runs
+are an event rather than the common case.
+
+### Parallel warm-cache reads
+**Effort:** S.
+The streaming worker pool already runs N goroutines, and on a warm
+run each worker's only work is `HashFile` + `Cache.Get` (open + gob
+decode + chtimes). Top reports ~100% CPU on big warm runs because
+disk I/O for the cache reads serialises through the kernel.
+Reading the cache entries with `bufio.Reader` plus a smaller
+on-disk format (see below) should let warm runs spread across
+cores. Current absolute numbers are tiny (70 ms on the full kubectl
+module), so this is polish, not a load-bearing item.
+
+### Content-sniff pre-filter
+**Effort:** M.
+Most rules need a specific token to be present (`gets`, `panic`,
+`==`). A grep-before-parse pass can prune the candidate file set
+by 80–95% cheaply on the cold path, where a parse is hundreds of
+ms and a grep is hundreds of µs. Either inferred from each rule's
+pattern (heuristic — most patterns include node text constraints
+that imply substring needs) or declared explicitly via a rule
+field like `require_substring: ["gets"]`. Pays off for the sparse-
+rule case running against a huge tree; less important once the
+cache absorbs repeat runs.
+
+### Tighter cache encoding than `gob`
+**Effort:** S.
+Each cache entry today is ~500 bytes of gob — most of which is
+type metadata, not data. A hand-rolled binary encoding (or
+encoding/json with `omitempty`) would shrink entries 3–5× and
+decode faster. Matters once cache size limits start biting on
+huge monorepos; on kubectl the whole cache is 250 KB and nobody
+will notice.
+
+### Async / batched cache writes
+**Effort:** S.
+`Cache.Put` is on the worker goroutine's hot path: gob encode +
+CreateTemp + Encode + Rename per file. Pushing writes to a
+single background goroutine via a channel would let the worker
+return to parsing the next file immediately. Modest wall-time
+gain on cold runs (a few percent), zero impact on warm runs.
+
+### Drain arena pools between batches
+**Effort:** S.
+`gotreesitter` retains released arenas in a process-global pool
+(up to 8 incremental + 4 full). On big runs the pool stays warm
+and the Go GC scans those pooled arenas as part of every cycle —
+contributing to the GC pressure that bumped us from `GOGC=100`
+to `GOGC=1000` in `cmd/pasta`. Calling `gts.DrainArenaPools()`
+after each ~100-file batch in the streaming path would let those
+arenas get collected; trade-off is fresh-arena allocation cost on
+the next parse.
+
 ### Early termination per rule
 **Effort:** S.
 For rules that only `Diagnose` (no `Emit`, no `Rewrite`), once a

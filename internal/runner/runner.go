@@ -20,6 +20,7 @@ import (
 	"github.com/imjasonh/pasta/internal/engine"
 	"github.com/imjasonh/pasta/internal/lang"
 	"github.com/imjasonh/pasta/internal/loader"
+	"github.com/imjasonh/pasta/internal/parsecache"
 )
 
 // FileResult holds the engine output for a single source file plus the
@@ -101,6 +102,20 @@ type FileSpec struct {
 	Src  []byte
 }
 
+// Option configures a single RunGroup call.
+type Option func(*runOpts)
+
+type runOpts struct {
+	cache *parsecache.Cache
+}
+
+// WithCache plumbs a persistent parse-result cache through to the
+// engine. The cache is consulted only on the streaming code path;
+// see engine.WithCache for the correctness conditions.
+func WithCache(c *parsecache.Cache) Option {
+	return func(o *runOpts) { o.cache = c }
+}
+
 // RunGroup runs every analyzer over all files in spec as one analysis
 // group: a single fact store is shared across files, so a fact emitted
 // in one file is visible to rules running on another. Returns one
@@ -108,9 +123,13 @@ type FileSpec struct {
 //
 // If applyFixes is true each result's Fixed is populated by applying
 // that file's ops to its source.
-func RunGroup(ctx context.Context, specs []FileSpec, analyzers []*dsl.Analyzer, applyFixes bool) ([]FileResult, error) {
+func RunGroup(ctx context.Context, specs []FileSpec, analyzers []*dsl.Analyzer, applyFixes bool, opts ...Option) ([]FileResult, error) {
 	if len(specs) == 0 {
 		return nil, nil
+	}
+	var o runOpts
+	for _, opt := range opts {
+		opt(&o)
 	}
 	inputs := make([]engine.FileInput, 0, len(specs))
 	for _, s := range specs {
@@ -121,7 +140,11 @@ func RunGroup(ctx context.Context, specs []FileSpec, analyzers []*dsl.Analyzer, 
 		}
 		inputs = append(inputs, engine.FileInput{FileID: s.Path, Src: s.Src, Lang: l})
 	}
-	results, err := engine.RunGroup(ctx, inputs, analyzers)
+	var engineOpts []engine.Option
+	if o.cache != nil {
+		engineOpts = append(engineOpts, engine.WithCache(o.cache))
+	}
+	results, err := engine.RunGroup(ctx, inputs, analyzers, engineOpts...)
 	if err != nil {
 		return nil, err
 	}

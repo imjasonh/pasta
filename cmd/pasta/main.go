@@ -151,6 +151,10 @@ func runFix(args []string) int {
 		}
 	}
 	if cache != nil {
+		if os.Getenv("PASTA_CACHE_STATS") != "" {
+			s := cache.Stats()
+			fmt.Fprintf(os.Stderr, "cache: %d hits, %d misses, %d writes\n", s.Hits, s.Misses, s.Writes)
+		}
 		// Best-effort prune at the end of the run. Failures are
 		// silent — the cache works fine even slightly over budget.
 		_ = cache.Prune()

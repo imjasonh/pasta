@@ -10,6 +10,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/effect"
@@ -86,9 +88,22 @@ type releaser interface{ Release() }
 // with files).
 //
 // The schedule is global across the union of all applicable rules.
-// For each topo group the engine walks the files; non-fixpoint groups
-// run once, fixpoint groups iterate emit-only until the fact store
-// stops growing and then do one final collection pass.
+//
+// Two execution paths:
+//
+//   - Streaming (default): when no rule has cross-file `requires` and
+//     no rule group is a fixpoint, each file is processed independently
+//     — parse, run all groups, release the tree. Files are dispatched
+//     across a worker pool so parsing and matching run in parallel.
+//     Peak memory is O(workers × tree-size) instead of O(N × tree-size).
+//
+//   - Legacy in-memory: when a rule's `requires` references facts
+//     emitted by other rules, OR when any group is a fixpoint, every
+//     file's tree is held in memory while the engine walks the rule
+//     groups in topo order. This is necessary because a consumer rule
+//     on file F may depend on facts emitted by a provider rule on file
+//     F+N — the schedule must visit every file for the producer
+//     group before any file for the consumer group.
 func RunGroup(
 	ctx context.Context,
 	files []FileInput,
@@ -98,6 +113,138 @@ func RunGroup(
 		return nil, nil
 	}
 
+	groups, err := scheduleGroups(analyzers)
+	if err != nil {
+		return nil, err
+	}
+
+	if canStream(groups) {
+		return runStreaming(ctx, files, groups)
+	}
+	return runInMemory(ctx, files, groups)
+}
+
+// canStream reports whether the schedule is compatible with the
+// per-file streaming path. The streaming path requires that each file
+// can be processed independently of every other file in the group —
+// meaning no rule needs to see facts emitted on a different file.
+//
+// That holds when (a) no rule group is a fixpoint group (those iterate
+// across all files until convergence), and (b) no rule's `requires`
+// list is non-empty (rules with `requires` consume facts that might
+// have been emitted on any file in the group).
+func canStream(groups []ruleGroup) bool {
+	for _, g := range groups {
+		if g.fixpoint {
+			return false
+		}
+		for _, sr := range g.rules {
+			if len(sr.rule.Requires) > 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// runStreaming processes each file independently across a worker pool
+// of size GOMAXPROCS. Trees are released as soon as their file's rules
+// finish, keeping peak memory bounded by the worker count rather than
+// the file count.
+func runStreaming(
+	ctx context.Context,
+	files []FileInput,
+	groups []ruleGroup,
+) ([]Result, error) {
+	store := factstore.New()
+	results := make([]Result, len(files))
+
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(files) {
+		workers = len(files)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	type job struct{ idx int }
+	jobs := make(chan job, workers)
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if err := processFile(ctx, files[j.idx], groups, store, &results[j.idx]); err != nil {
+					select {
+					case errCh <- err:
+						cancel()
+					default:
+					}
+					return
+				}
+			}
+		}()
+	}
+
+dispatch:
+	for i := range files {
+		select {
+		case <-ctx.Done():
+			break dispatch
+		case jobs <- job{idx: i}:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	select {
+	case err := <-errCh:
+		return nil, err
+	default:
+	}
+	return results, nil
+}
+
+// processFile parses one file, runs every applicable rule group against
+// it, then releases the tree. Used by the streaming path.
+func processFile(
+	ctx context.Context,
+	f FileInput,
+	groups []ruleGroup,
+	store *factstore.Store,
+	out *Result,
+) error {
+	s, err := newFileState(ctx, f, store)
+	if err != nil {
+		return err
+	}
+	defer s.tree.Release()
+	for _, group := range groups {
+		if err := runGroupOnFile(group, s, store, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// runInMemory is the legacy path used when the schedule has cross-file
+// or fixpoint dependencies. Every file's tree is held in memory while
+// the engine walks the rule groups in topo order, so a consumer group
+// sees facts emitted by every producer group on every file.
+func runInMemory(
+	ctx context.Context,
+	files []FileInput,
+	groups []ruleGroup,
+) ([]Result, error) {
 	store := factstore.New()
 	states := make([]fileState, 0, len(files))
 	results := make([]Result, len(files))
@@ -113,33 +260,11 @@ func RunGroup(
 	}()
 
 	for _, f := range files {
-		tree, root, err := tsutil.Parse(ctx, f.Lang.GetLanguage(), f.Src, f.FileID)
+		s, err := newFileState(ctx, f, store)
 		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", f.FileID, err)
+			return nil, err
 		}
-		commentTypes := make(map[string]bool, len(f.Lang.CommentTypes))
-		for _, t := range f.Lang.CommentTypes {
-			commentTypes[t] = true
-		}
-		env := &match.Env{
-			StmtList:     f.Lang.StmtList,
-			Predicates:   match.DefaultRegistry(),
-			FactStore:    store,
-			CommentTypes: commentTypes,
-			Index:        match.BuildIndex(root),
-		}
-		states = append(states, fileState{
-			input:    f,
-			tree:     tree,
-			root:     root,
-			env:      env,
-			suppress: parseSuppressions(root, commentTypes),
-		})
-	}
-
-	groups, err := scheduleGroups(analyzers)
-	if err != nil {
-		return nil, err
+		states = append(states, s)
 	}
 
 	for _, group := range groups {
@@ -173,6 +298,34 @@ func RunGroup(
 		}
 	}
 	return results, nil
+}
+
+// newFileState parses one file and builds its match environment +
+// suppression map. The caller owns the returned tree and must call
+// Release when done with it.
+func newFileState(ctx context.Context, f FileInput, store *factstore.Store) (fileState, error) {
+	tree, root, err := tsutil.Parse(ctx, f.Lang.GetLanguage(), f.Src, f.FileID)
+	if err != nil {
+		return fileState{}, fmt.Errorf("parse %s: %w", f.FileID, err)
+	}
+	commentTypes := make(map[string]bool, len(f.Lang.CommentTypes))
+	for _, t := range f.Lang.CommentTypes {
+		commentTypes[t] = true
+	}
+	env := &match.Env{
+		StmtList:     f.Lang.StmtList,
+		Predicates:   match.DefaultRegistry(),
+		FactStore:    store,
+		CommentTypes: commentTypes,
+		Index:        match.BuildIndex(root),
+	}
+	return fileState{
+		input:    f,
+		tree:     tree,
+		root:     root,
+		env:      env,
+		suppress: parseSuppressions(root, commentTypes),
+	}, nil
 }
 
 // runGroupOnFile runs every rule in group that applies to s's language,

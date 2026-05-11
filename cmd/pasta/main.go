@@ -39,6 +39,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -50,6 +51,17 @@ import (
 )
 
 func main() {
+	// Pasta runs as a one-shot CLI over many big tree-sitter parse trees.
+	// The default GC pacing (GOGC=100) triggers a collection every time
+	// the heap doubles, which on a `./...` walk fires once per file or
+	// two and dominates wall time. Loosening the ratio lets us batch many
+	// files between collections — peak RSS grows, but a developer-machine
+	// CLI can spend the headroom. Honour an explicit GOGC env var; only
+	// override the implicit default.
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(1000)
+	}
+
 	if len(os.Args) >= 2 {
 		switch os.Args[1] {
 		case "test":

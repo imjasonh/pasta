@@ -11,7 +11,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
-	"sync"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/imjasonh/pasta/internal/dsl"
 	"github.com/imjasonh/pasta/internal/effect"
@@ -199,49 +200,24 @@ func runStreaming(
 		workers = 1
 	}
 
-	type job struct{ idx int }
-	jobs := make(chan job, workers)
-	errCh := make(chan error, workers)
-	var wg sync.WaitGroup
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				if err := processFile(ctx, files[j.idx], groups, store, &results[j.idx], cache); err != nil {
-					select {
-					case errCh <- err:
-						cancel()
-					default:
-					}
-					return
-				}
-			}
-		}()
-	}
-
-dispatch:
+	// errgroup gives us: bounded concurrency (SetLimit), automatic
+	// context cancellation on the first error (WithContext), and
+	// first-error propagation through Wait. Each iteration writes to
+	// its own results[i] slot, so there's no shared mutable state in
+	// the closure beyond the fact store (mutex-protected).
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(workers)
 	for i := range files {
-		select {
-		case <-ctx.Done():
-			break dispatch
-		case jobs <- job{idx: i}:
-		}
+		i := i
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			return processFile(gctx, files[i], groups, store, &results[i], cache)
+		})
 	}
-	close(jobs)
-	wg.Wait()
-
-	select {
-	case err := <-errCh:
+	if err := g.Wait(); err != nil {
 		return nil, err
-	default:
 	}
 	return results, nil
 }
